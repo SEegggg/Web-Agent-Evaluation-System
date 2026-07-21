@@ -1,0 +1,97 @@
+# ============================================================
+# Agent A 自动评审系统 — 配置文件
+# ============================================================
+# 使用方法:
+#   python run_eval.py                        # 使用默认配置
+#   python run_eval.py --config my_config.yaml # 使用自定义配置
+#
+# 所有路径如未指定绝对路径，则相对于本配置文件所在目录解析。
+# api_key 为 null 时自动从环境变量读取:
+#   - OpenAI:   OPENAI_API_KEY
+#   - Anthropic: ANTHROPIC_API_KEY
+# ============================================================
+
+# ──────────────────────────────────────────────────────────
+# 驱动 Agent LLM 配置（操作浏览器、执行测试的 Agent）
+# ──────────────────────────────────────────────────────────
+driver_agent:
+  provider: openai              # openai | anthropic
+  model: deepseek-v4-flash                 # 模型名称
+  api_key: null                 # null = 从环境变量读取 (e.g. OPENAI_API_KEY)
+  base_url: null                # null = 使用默认 API 地址
+  temperature: 0.1              # 0.0-2.0，越低越确定
+  max_tokens: 200000
+  # 以下为 BrowserGym DemoAgent 特有参数
+  chat_mode: false              # true = 对话模式（多轮对话）
+  demo_mode: "off"              # "default" = 视觉特效, "off" = 无特效
+  use_html: false               # 是否使用 HTML 观测
+  use_axtree: true              # 是否使用 AXTree 观测（推荐）
+  use_screenshot: false         # 是否使用截图观测
+
+# ──────────────────────────────────────────────────────────
+# 评审 Agent LLM 配置（独立于浏览器、对结果评分的 Agent）
+# ──────────────────────────────────────────────────────────
+evaluator:
+  provider: openai              # openai | anthropic
+  model: deepseek-v4-flash                 # 建议使用强模型以保证评分质量
+  api_key: null                # null = 从环境变量读取
+  base_url: null               # null = 使用默认 API 地址
+  temperature: 0.1              # 低温度保证评分一致性
+  max_tokens: 200000
+
+# ──────────────────────────────────────────────────────────
+# 登录配置（Agent A 访问前需先登录）
+# ──────────────────────────────────────────────────────────
+login:
+  # 登录页面 URL，为空则跳过登录步骤
+  # 如果登录表单在 Agent A 主页面上，填写 Agent A 的地址即可
+  url: ""                       # Agent A 的登录页面 URL
+  # 登录凭据（留空 = 跳过登录步骤）
+  username: ""                 # 登录用户名
+  password: ""                 # 登录密码
+  # 【推荐】持久化浏览器 profile 目录 — 像普通 Chrome 一样保留所有登录状态
+  # 首次运行登录后，浏览器数据自动保存到此目录；后续运行自动恢复，无需重复登录
+  # 如需重新登录，删除此目录即可
+  user_data_dir: "./browser_profile"
+
+# ──────────────────────────────────────────────────────────
+# 浏览器配置
+# ──────────────────────────────────────────────────────────
+browser:
+  headless: true                # true = 无头模式（后台运行）
+  viewport_width: 1280
+  viewport_height: 900
+  slow_mo: 500                  # 操作间隔（ms），避免过快
+  timeout: 10000                # Playwright 单次操作超时（ms）
+
+# ──────────────────────────────────────────────────────────
+# 路径配置
+# ──────────────────────────────────────────────────────────
+paths:
+  tasks_dir: tasks              # 任务 .md 文件目录
+  datasets_dir: test_data/datasets  # 测试数据集目录
+  exp_root: ./results           # 实验结果输出目录
+  reports_dir: ./reports        # 评分报告输出目录
+
+# ──────────────────────────────────────────────────────────
+# 评测设置
+# ──────────────────────────────────────────────────────────
+evaluation:
+  # 【待评测的任务列表】，留空 = 自动扫描 tasks_dir 下所有 .md 文件
+  # 示例: ["data_analysis", "data_cleaning"]
+  tasks: []
+
+  # 泛化性测试：使用多少个不同的数据集
+  generalization_datasets: 3
+
+  # 稳定性测试：使用哪些随机种子
+  stability_seeds: [42, 123, 456]
+
+  # 每个实验的最大步数
+  max_steps: 200
+
+  # 【可选】为特定任务指定数据集列表（覆盖 .md 中的定义）
+  # 示例:
+  #   task_datasets:
+  #     data_analysis: ["sales_2024.csv", "customers.csv"]
+  task_datasets: {}

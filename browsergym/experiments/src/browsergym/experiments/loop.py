@@ -46,6 +46,7 @@ class EnvArgs(DataClassJsonMixin):
     viewport: Optional[dict] = None  # use default value from BrowserGym
     slow_mo: Optional[int] = None  # use default value from BrowserGym
     storage_state: Optional[str | Path | dict] = None
+    user_data_dir: Optional[str | Path] = None  # use launch_persistent_context (persistent browser profile)
     task_kwargs: Optional[dict] = None  # use default value from BrowserGym
 
     def make_env(
@@ -71,6 +72,8 @@ class EnvArgs(DataClassJsonMixin):
             extra_kwargs["slow_mo"] = self.slow_mo
         if self.storage_state:
             extra_kwargs["pw_context_kwargs"] = {"storage_state": self.storage_state}
+        if self.user_data_dir is not None:
+            extra_kwargs["pw_user_data_dir"] = str(self.user_data_dir)
         if self.task_kwargs is not None:
             extra_kwargs["task_kwargs"] = self.task_kwargs
         if exp_task_kwargs:
@@ -946,6 +949,8 @@ def _get_env_name(task_name: str):
         import weblinx_browsergym
     elif task_name.startswith("timewarp"):
         import browsergym.timewarp
+    elif task_name.startswith("agent_a_eval"):
+        import browsergym.agent_a_eval
 
     return f"browsergym/{task_name}"
 

@@ -1,307 +1,114 @@
-<div align="center">
+# Web Agent Test System
 
-![BrowserGym banner](https://github.com/user-attachments/assets/4853f210-43ac-4107-a0d2-95c9c614dbe7)
+基于 [BrowserGym](https://github.com/ServiceNow/BrowserGym) 构建的**网页端 AI Agent 自动化评测系统**。
 
-🛠️ [Setup](#%EF%B8%8F-setup) -
-🏋 [Usage](#-usage) -
-💻 [Demo](#-demo) -
-🌐 [Ecosystem](#-ecosystem) -
-🚀 [AgentLab](https://github.com/ServiceNow/AgentLab) -
-🌟 [Contributors](#-contributors) -
-📄 [Paper](https://arxiv.org/abs/2412.05467) -
-📝 [Citation](#-citing-this-work)
+> 本项目 fork 自 [ServiceNow/BrowserGym](https://github.com/ServiceNow/BrowserGym)，在此基础上新增了 Agent A 自动评审模块。
 
-[![pypi](https://badge.fury.io/py/browsergym.svg)](https://pypi.org/project/browsergym/)
-[![PyPI - License](https://img.shields.io/pypi/l/browsergym?style=flat-square)]([https://opensource.org/licenses/MIT](http://www.apache.org/licenses/LICENSE-2.0))
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/browsergym-core?style=flat-square)](https://pypistats.org/packages/browsergym-core)
-[![GitHub star chart](https://img.shields.io/github/stars/ServiceNow/BrowserGym?style=flat-square)](https://star-history.com/#ServiceNow/BrowserGym)
-[![Code Format](https://github.com/ServiceNow/BrowserGym/actions/workflows/code_format.yml/badge.svg)](https://github.com/ServiceNow/BrowserGym/actions/workflows/code_format.yml)
-[![Tests](https://github.com/ServiceNow/BrowserGym/actions/workflows/unit_tests.yml/badge.svg)](https://github.com/ServiceNow/BrowserGym/actions/workflows/unit_tests.yml)
+---
 
-```python
-pip install browsergym
-```
+## 核心功能：Agent A 自动评审系统
 
-</div>
+针对数据科学类网页 Agent（Agent A）的自动化能力评测，支持：
 
-> [!WARNING]
-> BrowserGym is meant to provide an open, easy-to-use and extensible framework to accelerate the field of web agent research.
-> It is not meant to be a consumer product. Use with caution!
+- **驱动 Agent（Driver Agent）**：基于 BrowserGym 的 LLM Agent，自动操作浏览器、上传数据集、与 Agent A 对话、触发任务执行
+- **评审 Agent（Evaluator Agent）**：独立的 LLM 评审器，不依赖浏览器，仅消费 Driver Agent 收集的 artifacts（页面输出、对话历史），对 Agent A 的多维度表现打分
+- **泛化性测试**：固定 workflow，变换数据集，评估 Agent A 对不同数据的适应能力
+- **稳定性测试**：固定数据集，变换随机种子，评估 Agent A 输出的确定性/稳定性
 
-> [!TIP]
-> 🚀 Check out [AgentLab](https://github.com/ServiceNow/AgentLab)✨ !
-> A seamless framework to implement, test, and evaluate your web agents on all BrowserGym benchmarks.
+📖 详细文档：[browsergym/agent_a_eval/README.md](browsergym/agent_a_eval/README.md)
 
-https://github.com/ServiceNow/BrowserGym/assets/26232819/e0bfc788-cc8e-44f1-b8c3-0d1114108b85
+### 快速开始
 
-_Example of a GPT4-V agent executing openended tasks (top row, chat interactive), as well as WebArena and WorkArena tasks (bottom row)._
-
-BrowserGym includes the following benchmarks by default:
- - [MiniWoB](https://miniwob.farama.org/)
- - [WebArena](https://webarena.dev/)
- - [WebArenaVerified](https://github.com/ServiceNow/webarena-verified)
- - [VisualWebArena](https://jykoh.com/vwa)
- - [WorkArena](https://github.com/ServiceNow/WorkArena)
- - [AssistantBench](https://github.com/oriyor/assistantbench)
- - [WebLINX](https://github.com/McGill-NLP/weblinx) (static benchmark)
- - [OpenApps](https://facebookresearch.github.io/OpenApps/)
- - [TimeWarp](https://timewarp-web.github.io)
-
-Designing new web benchmarks with BrowserGym is easy, and simply requires to inherit the [`AbstractBrowserTask`](https://github.com/ServiceNow/BrowserGym/blob/main/browsergym/core/src/browsergym/core/task.py#L7C7-L7C26) class.
-
-## 🛠️ Setup
-
-To use browsergym, install one of the following packages:
-```sh
-pip install browsergym  # (recommended) everything below
-pip install browsergym-experiments  # experiment utilities (agent, loop, benchmarks) + everything below
-pip install browsergym-core  # core functionalities only (no benchmark, just the openended task)
-pip install browsergym-miniwob  # core + miniwob
-pip install browsergym-webarena  # core + webarena
-pip install browsergym-webarena-verified  # core + webarena_verified
-pip install browsergym-visualwebarena  # core + visualwebarena
-pip install browsergym-workarena  # core + workarena
-pip install browsergym-assistantbench  # core + assistantbench
-pip install weblinx-browsergym  # core + weblinx
-pip install browsergym-timewarp  # core + timewarp 
-```
-
-Then setup playwright by running
-```sh
+```bash
+# 1. 安装依赖
+pip install -e ./browsergym/core
+pip install -e ./browsergym/experiments
+pip install -e ./browsergym/agent_a_eval
+pip install -r ./demo_agent/requirements.txt
 playwright install chromium
+
+# 2. 配置 config.yaml（LLM、登录、浏览器等）
+
+# 3. 运行评测
+cd browsergym/agent_a_eval
+python run_eval.py
 ```
 
-Finally, each benchmark comes with its own specific setup that requires to follow additional steps.
- - for MiniWoB++, see [miniwob/README.md](browsergym/miniwob/README.md)
- - for WebArena, see [webarena/README.md](browsergym/webarena/README.md)
- - for WebArenaVerified, see [webarena_verified/README.md](browsergym/webarena_verified/README.md)
- - for VisualWebArena, see [visualwebarena/README.md](browsergym/visualwebarena/README.md)
- - for WorkArena, see [WorkArena](https://github.com/ServiceNow/WorkArena)
- - for AssistantBench, see [assistantbench/README.md](browsergym/assistantbench/README.md)
- - for OpenApps, see [OpenApps docs](https://facebookresearch.github.io/OpenApps/)
-  - for TimeWarp, see [timewarp/README.md](https://github.com/sparklabutah/timewarp)
+### 项目结构
 
-### 🏗️ Development setup
-
-To install browsergym locally for development, use the following commands:
-```sh
-git clone git@github.com:ServiceNow/BrowserGym.git
-cd BrowserGym
-make install
+```
+browsergym/agent_a_eval/
+├── config.yaml                    # 统一配置文件
+├── run_eval.py                    # 测试入口
+├── prompts/
+│   ├── driver_agent_prompt.md     # 驱动 Agent 操作手册
+│   └── evaluator_agent_prompt.md  # 评审 Agent 系统提示
+├── tasks/                         # 任务定义（.md 文件）
+│   ├── data_analysis.md
+│   ├── data_cleaning.md
+│   └── model_training.md
+├── test_data/datasets/            # 测试数据集
+└── src/browsergym/agent_a_eval/   # 源码
+    ├── __init__.py                # Gym 环境注册
+    ├── task.py                    # WorkflowTask（核心）
+    ├── evaluator.py               # EvaluatorAgent（LLM 评审）
+    ├── runner.py                  # WorkflowRunner（批量编排）
+    └── utils.py                   # LoopDetector / PageStateChecker
 ```
 
-Contributions are welcome! 😊
+### 架构
 
-## 🏋 Usage
+```
+Driver Agent (BrowserGym)              Evaluator Agent (独立)
+├─ 读取 tasks/*.md 任务定义            ├─ 读取 artifacts
+├─ 操作浏览器与 Agent A 交互            ├─ 调用 LLM 评分
+├─ 触发 WORKFLOW_DONE 信号              └─ 输出结构化 JSON 评分
+└─ 硬校验 → 收集 artifacts
 
-Boilerplate code to run an agent on an interactive, open-ended task:
-```python
-import gymnasium as gym
-import browsergym.core  # register the openended task as a gym environment
-
-# start an openended environment
-env = gym.make(
-    "browsergym/openended",
-    task_kwargs={"start_url": "https://www.google.com/"},  # starting URL
-    wait_for_user_message=True,  # wait for a user message after each agent message sent to the chat
-)
-# run the environment <> agent loop until termination
-obs, info = env.reset()
-while True:
-    action = ...  # implement your agent here
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated or truncated:
-        break
-# release the environment
-env.close()
+WorkflowRunner
+├─ 泛化性测试: 固定 seed=42, 变数据集
+└─ 稳定性测试: 固定数据集, 变 seed
 ```
 
-MiniWoB
-```python
-import gymnasium as gym
-import browsergym.miniwob  # register miniwob tasks as gym environments
+---
 
-# start a miniwob task
-env = gym.make("browsergym/miniwob.choose-list")
-...
+## BrowserGym 生态
 
-# list all the available miniwob tasks
-env_ids = [id for id in gym.envs.registry.keys() if id.startswith("browsergym/miniwob")]
-print("\n".join(env_ids))
-```
+本项目底层使用 BrowserGym 提供的标准 Gymnasium 环境和实验工具：
 
-WorkArena
-```python
-import gymnasium as gym
-import browsergym.workarena  # register workarena tasks as gym environments
+- **BrowserGym Core**：Playwright 驱动的浏览器环境，提供标准化的观察/动作空间
+- **BrowserGym Experiments**：实验基础设施（`ExpArgs`, `EnvArgs`, `Agent` 基类）
+- **[AgentLab](https://github.com/ServiceNow/AgentLab)**：大规模实验编排框架（Ray 并行、结果分析、AgentXRay 可视化）
 
-# start a workarena task
-env = gym.make("browsergym/workarena.servicenow.order-ipad-pro")
-...
+BrowserGym 内置以下基准测试：
 
-# list all the available workarena tasks
-env_ids = [id for id in gym.envs.registry.keys() if id.startswith("browsergym/workarena")]
-print("\n".join(env_ids))
-```
+- [MiniWoB](https://miniwob.farama.org/)
+- [WebArena](https://webarena.dev/)
+- [WebArenaVerified](https://github.com/ServiceNow/webarena-verified)
+- [VisualWebArena](https://jykoh.com/vwa)
+- [WorkArena](https://github.com/ServiceNow/WorkArena)
+- [AssistantBench](https://github.com/oriyor/assistantbench)
+- [WebLINX](https://github.com/McGill-NLP/weblinx)
+- [OpenApps](https://facebookresearch.github.io/OpenApps/)
+- [TimeWarp](https://timewarp-web.github.io)
 
-WebArena
-```python
-import gymnasium as gym
-import browsergym.webarena  # register webarena tasks as gym environments
+---
 
-# start a webarena task
-env = gym.make("browsergym/webarena.310")
-...
-
-# list all the available webarena tasks
-env_ids = [id for id in gym.envs.registry.keys() if id.startswith("browsergym/webarena")]
-print("\n".join(env_ids))
-```
-
-VisualWebArena
-```python
-import gymnasium as gym
-import browsergym.webarena  # register webarena tasks as gym environments
-
-# start a visualwebarena task
-env = gym.make("browsergym/visualwebarena.721")
-...
-
-# list all the available visualwebarena tasks
-env_ids = [id for id in gym.envs.registry.keys() if id.startswith("browsergym/visualwebarena")]
-print("\n".join(env_ids))
-```
-
-AssistantBench
-```python
-import gymnasium as gym
-import browsergym.workarena  # register assistantbench tasks as gym environments
-
-# start an assistantbench task
-env = gym.make("browsergym/assistantbench.validation.3")
-...
-
-# list all the available assistantbench tasks
-env_ids = [id for id in gym.envs.registry.keys() if id.startswith("browsergym/workarena")]
-print("\n".join(env_ids))
-```
-
-OpenApps
-```python
-from open_apps.apps.start_page.main import app  # need to import apps to serve
-from open_apps.launcher import OpenAppsLauncher
-
-config = ... # configure a namespace with task, agent, envrionment, and server configs
-
-launcher = OpenAppsLauncher(config)
-launcher.launch()
-```
-
-TimeWarp
-```python
-import gymnasium as gym
-import browsergym.timewarp  # register timewarp tasks as gym environments
-
-# start a timewarp task
-env = gym.make("browsergym/timewarp.1")
-...
-
-# list all the available timewarp tasks
-env_ids = [id for id in gym.envs.registry.keys() if id.startswith("browsergym/timewarp")]
-print("\n".join(env_ids))
-```
-
-## 💻 Demo
-
-If you want to experiment with a demo agent in BrowserGym, follow these steps
-```sh
-# conda setup
-conda env create -f demo_agent/environment.yml
-conda activate demo_agent
-
-# or pip setup
-pip install -r demo_agent/requirements.txt
-
-# then download the browser for playwright
-playwright install chromium
-```
-
-Our demo agent uses `openai` as a backend, be sure to set your `OPENAI_API_KEY`.
-
-Launch the demo agent as follows
-```sh
-# openended (interactive chat mode)
-python demo_agent/run_demo.py --task_name openended --start_url https://www.google.com
-
-# miniwob
-python demo_agent/run_demo.py --task_name miniwob.click-test
-
-# workarena
-python demo_agent/run_demo.py --task_name workarena.servicenow.order-standard-laptop
-
-# webarena
-python demo_agent/run_demo.py --task_name webarena.4
-
-# visualwebarena
-python demo_agent/run_demo.py --task_name visualwebarena.398
-```
-
-You can customize your experience by changing the `model_name` to your preferred LLM (it uses `gpt-4o-mini` by default), adding screenshots for your VLMs with `use_screenshot`, and much more!
-
-```python
-python demo_agent/run_demo.py --help
-```
-
-## 🌐 Ecosystem
-
-- [AgentLab](https://github.com/ServiceNow/AgentLab): Seamlessly run agents on benchmarks, collect and analyse traces.
-- [WorkArena(++)](https://github.com/ServiceNow/WorkArena): A benchmark for web agents on the ServiceNow platform.
-- [WebArena](https://github.com/web-arena-x/webarena): A benchmark of realistic web tasks on self-hosted domains.
-- [VisualWebArena](https://github.com/web-arena-x/visualwebarena): A benchmark of realistic visual web tasks on self-hosted domains.
-- [MiniWoB(++)](https://miniwob.farama.org/): A collection of over 100 web tasks on synthetic web pages.
-- [WebLINX](https://github.com/McGill-NLP/weblinx): A dataset of real-world web interaction traces.
-- [AssistantBench](https://github.com/oriyor/assistantbench): A benchmark of realistic and time-consuming tasks on the open web.
-- [DoomArena](https://github.com/ServiceNow/DoomArena): A framework for AI agent security testing which supports injecting attacks into web pages from Browsergym environments.
-
-## 🌟 Contributors
-
-[![BrowserGym contributors](https://contrib.rocks/image?repo=ServiceNow/BrowserGym&max=2000)](https://github.com/ServiceNow/BrowserGym/graphs/contributors)
-
-## 📝 Citing This Work
-
-Please use the two following bibtex entries if you wish to cite BrowserGym:
+## Citation
 
 ```tex
 @article{
     chezelles2025browsergym,
     title={The BrowserGym Ecosystem for Web Agent Research},
-    author={Thibault Le Sellier de Chezelles and Maxime Gasse and Alexandre Lacoste and Massimo Caccia and Alexandre Drouin and L{\'e}o Boisvert and Megh Thakkar and Tom Marty and Rim Assouel and Sahar Omidi Shayegan and Lawrence Keunho Jang and Xing Han L{\`u} and Ori Yoran and Dehan Kong and Frank F. Xu and Siva Reddy and Graham Neubig and Quentin Cappart and Russ Salakhutdinov and Nicolas Chapados},
+    author={Thibault Le Sellier de Chezelles and Maxime Gasse and Alexandre Lacoste and
+            Massimo Caccia and Alexandre Drouin and L{\'e}o Boisvert and Megh Thakkar and
+            Tom Marty and Rim Assouel and Sahar Omidi Shayegan and Lawrence Keunho Jang and
+            Xing Han L{\`u} and Ori Yoran and Dehan Kong and Frank F. Xu and Siva Reddy and
+            Graham Neubig and Quentin Cappart and Russ Salakhutdinov and Nicolas Chapados},
     journal={Transactions on Machine Learning Research},
     issn={2835-8856},
     year={2025},
     url={https://openreview.net/forum?id=5298fKGmv3},
     note={Expert Certification}
 }
-
-@inproceedings{workarena2024,
-    title = {{W}ork{A}rena: How Capable are Web Agents at Solving Common Knowledge Work Tasks?},
-    author = {Drouin, Alexandre and Gasse, Maxime and Caccia, Massimo and Laradji, Issam H. and Del Verme, Manuel and Marty, Tom and Vazquez, David and Chapados, Nicolas and Lacoste, Alexandre},
-    booktitle = {Proceedings of the 41st International Conference on Machine Learning},
-    pages = {11642--11662},
-    year = {2024},
-    editor = {Salakhutdinov, Ruslan and Kolter, Zico and Heller, Katherine and Weller, Adrian and Oliver, Nuria and Scarlett, Jonathan and Berkenkamp, Felix},
-    volume = {235},
-    series = {Proceedings of Machine Learning Research},
-    month = {21--27 Jul},
-    publisher = {PMLR},
-    url = {https://proceedings.mlr.press/v235/drouin24a.html},
-}
 ```
-
-Here is an example of how they can be used:
-
-```tex
-We use the BrowserGym framework for our experiments \cite{workarena2024,chezelles2025browsergym}.
-```
-## Traces
-Traces from “The BrowserGym Ecosystem for Web Agent Research” paper are available in [Huggingface](https://huggingface.co/datasets/agentlabtraces/agentlabtraces/tree/main).

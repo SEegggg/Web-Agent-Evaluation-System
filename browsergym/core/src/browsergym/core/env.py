@@ -74,6 +74,7 @@ class BrowserEnv(gym.Env, ABC):
         record_video_dir: Optional[str] = None,
         pw_chromium_kwargs: dict = {},
         pw_context_kwargs: dict = {},
+        pw_user_data_dir: Optional[str] = None,  # use launch_persistent_context instead of incognito
         # agent-related arguments
         action_mapping: Optional[callable] = HighLevelActionSet().to_python_code,
         use_raw_page_output: bool = False,
@@ -97,6 +98,10 @@ class BrowserEnv(gym.Env, ABC):
             record_video_dir: if set, indicates a directory to which viewport videos will be recorded.
             pw_chromium_kwargs: extra parameters for the playwright Browser. Should only be used for debugging/testing.
             pw_context_kwargs: extra parameters for the playwright BrowserContext. Should only be used for debugging/testing.
+            pw_user_data_dir: if set, launches a persistent-context browser that behaves like a regular Chrome
+                installation — all cookies, localStorage, IndexedDB etc. persist across sessions automatically.
+                This is the equivalent of using a normal browser (not incognito). When None (default), uses
+                the standard incognito launch + context approach.
             action_mapping: if set, the environment will use this function to map every received action to executable Python code.
             use_raw_page_output: if set, the environment will use the raw page output instead of the default processing.
             pre_observation_delay: float = 0.5, number of seconds to wait before starting to extract the observation. This can be important if there are some auto-complete menu that may appear after filling a field.
@@ -117,6 +122,7 @@ class BrowserEnv(gym.Env, ABC):
         self.record_video_dir = record_video_dir
         self.pw_chromium_kwargs = pw_chromium_kwargs
         self.pw_context_kwargs = pw_context_kwargs
+        self.pw_user_data_dir = pw_user_data_dir
         self.action_mapping = action_mapping
         self.use_raw_page_output = use_raw_page_output
         self.pre_observation_delay = pre_observation_delay
@@ -267,31 +273,59 @@ class BrowserEnv(gym.Env, ABC):
         ]
         args = [arg for arg in args if arg is not None]  # Remove None values
 
-        # create a new browser
-        self.browser = pw.chromium.launch(
-            headless=self.headless,
-            slow_mo=slow_mo,
-            args=args,
-            ignore_default_args=[
-                "--hide-scrollbars"
-            ],  # otherwise the screenshot doesn't see the scrollbars
-            # will raise an Exception if above args are overriden
-            **self.pw_chromium_kwargs,
-        )
+        # create a new browser + context
+        if self.pw_user_data_dir:
+            # ── Persistent profile mode ──
+            # Behaves like regular Chrome: cookies, localStorage, IndexedDB,
+            # and all other browser data persist across sessions automatically.
+            # No need for manual storage_state save/load.
+            user_data_dir = Path(self.pw_user_data_dir)
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Launching persistent-context browser: user_data_dir={user_data_dir}")
 
-        # create a new browser context for pages
-        self.context = self.browser.new_context(
-            no_viewport=True if self.resizeable_window else None,
-            viewport=viewport if not self.resizeable_window else None,
-            record_video_dir=(
-                Path(self.record_video_dir) / "task_video" if self.record_video_dir else None
-            ),
-            record_video_size=viewport,
-            locale=locale,
-            timezone_id=timezone_id,
-            # will raise an Exception if above args are overriden
-            **self.pw_context_kwargs,
-        )
+            self.context = pw.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                headless=self.headless,
+                slow_mo=slow_mo,
+                no_viewport=True if self.resizeable_window else None,
+                viewport=None if self.resizeable_window else viewport,
+                record_video_dir=(
+                    Path(self.record_video_dir) / "task_video" if self.record_video_dir else None
+                ),
+                record_video_size=viewport,
+                locale=locale,
+                timezone_id=timezone_id,
+                args=args,
+                ignore_default_args=["--hide-scrollbars"],
+                **self.pw_context_kwargs,
+            )
+            self.browser = self.context.browser
+        else:
+            # ── Incognito mode (default) ──
+            self.browser = pw.chromium.launch(
+                headless=self.headless,
+                slow_mo=slow_mo,
+                args=args,
+                ignore_default_args=[
+                    "--hide-scrollbars"
+                ],  # otherwise the screenshot doesn't see the scrollbars
+                # will raise an Exception if above args are overriden
+                **self.pw_chromium_kwargs,
+            )
+
+            # create a new browser context for pages
+            self.context = self.browser.new_context(
+                no_viewport=True if self.resizeable_window else None,
+                viewport=viewport if not self.resizeable_window else None,
+                record_video_dir=(
+                    Path(self.record_video_dir) / "task_video" if self.record_video_dir else None
+                ),
+                record_video_size=viewport,
+                locale=locale,
+                timezone_id=timezone_id,
+                # will raise an Exception if above args are overriden
+                **self.pw_context_kwargs,
+            )
 
         # set default timeout
         self.context.set_default_timeout(timeout)

@@ -1,0 +1,26 @@
+date,product,quantity,price,region
+2024-01-15,Widget A,120,19.99,North
+2024-01-16,Widget B,85,29.99,South
+2024-01-17,Gadget X,45,49.99,East
+2024-01-18,Widget A,98,19.99,West
+2024-01-19,Widget C,200,9.99,North
+2024-01-20,Gadget X,67,49.99,South
+2024-01-21,Widget B,112,29.99,East
+2024-01-22,Widget A,156,19.99,West
+2024-01-23,Widget C,178,9.99,North
+2024-01-24,Gadget X,34,49.99,South
+2024-01-25,Widget B,143,29.99,East
+2024-01-26,Widget A,189,19.99,West
+2024-01-27,Widget C,95,9.99,North
+2024-01-28,Gadget X,210,49.99,South
+2024-01-29,Widget B,76,29.99,East
+2024-01-30,Widget A,132,19.99,West
+2024-01-31,Widget C,167,9.99,North
+2024-02-01,Gadget X,88,49.99,South
+2024-02-02,Widget B,154,29.99,East
+2024-02-03,Widget A,201,19.99,West
+2024-02-04,Widget C,113,9.99,North
+2024-02-05,Gadget X,56,49.99,South
+2024-02-06,Widget B,91,29.99,East
+2024-02-07,Widget A,145,19.99,West
+2024-02-08,Widget C,189,9.99,North
