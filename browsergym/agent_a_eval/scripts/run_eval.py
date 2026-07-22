@@ -3,11 +3,12 @@ Agent A 自动评审系统 — 测试入口程序
 ====================================
 
 用法:
-    python run_eval.py                        # 使用 config.yaml 默认配置运行
-    python run_eval.py --config my_conf.yaml  # 使用自定义配置文件
-    python run_eval.py --task data_analysis   # 只运行指定任务
-    python run_eval.py --skip-stability       # 跳过稳定性测试
-    python run_eval.py --no-headless          # 显示浏览器窗口（调试用）
+    cd browsergym/agent_a_eval
+    python scripts/run_eval.py                        # 使用 config.yaml 默认配置运行
+    python scripts/run_eval.py --config my_conf.yaml  # 使用自定义配置文件
+    python scripts/run_eval.py --task data_analysis   # 只运行指定任务
+    python scripts/run_eval.py --skip-stability       # 跳过稳定性测试
+    python scripts/run_eval.py --no-headless          # 显示浏览器窗口（调试用）
 
 快速上手 —— 编辑下方 ★ 标记区域即可：
     1. 选择要测试的任务
@@ -65,7 +66,7 @@ def load_dotenv(dotenv_path: Path) -> None:
         print(f"[DOTENV] Loaded {loaded} variable(s) from {dotenv_path}")
 
 # 把项目根目录加到 sys.path，使 demo_agent 模块可被导入
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]  # BrowserGym workspace root
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
@@ -115,7 +116,7 @@ def parse_args():
     )
     p.add_argument(
         "--config", type=str, default=None,
-        help="配置文件路径 (默认: 与 run_eval.py 同目录的 config.yaml)",
+        help="配置文件路径 (默认: 与 scripts/run_eval.py 同级的 config.yaml)",
     )
     p.add_argument(
         "--task", type=str, action="append", dest="tasks",
@@ -363,7 +364,7 @@ def main():
     if args.config:
         config_path = Path(args.config)
     else:
-        config_path = Path(__file__).parent / "config.yaml"
+        config_path = Path(__file__).resolve().parent.parent / "config.yaml"
 
     # 加载 .env 文件（优先级低于已设置的环境变量）
     dotenv_path = config_path.parent / ".env"

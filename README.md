@@ -31,7 +31,7 @@ playwright install chromium
 
 # 3. 运行评测
 cd browsergym/agent_a_eval
-python run_eval.py
+python scripts/run_eval.py
 ```
 
 ### 项目结构
@@ -39,7 +39,9 @@ python run_eval.py
 ```
 browsergym/agent_a_eval/
 ├── config.yaml                    # 统一配置文件
-├── run_eval.py                    # 测试入口
+├── scripts/
+│   ├── run_eval.py                # 测试入口
+│   └── task_generator.py          # 任务生成工具
 ├── prompts/
 │   ├── driver_agent_prompt.md     # 驱动 Agent 操作手册
 │   └── evaluator_agent_prompt.md  # 评审 Agent 系统提示

@@ -22,7 +22,7 @@ from .utils import WorkflowConfig
 logger = logging.getLogger(__name__)
 
 # Default directories (relative to this package)
-_PKG_ROOT = Path(__file__).parent.parent.parent.parent
+_PKG_ROOT = Path(__file__).resolve().parents[3]  # browsergym/agent_a_eval/
 _DEFAULT_TASKS_DIR = _PKG_ROOT / "tasks"
 _DEFAULT_DATASETS_DIR = _PKG_ROOT / "test_data" / "datasets"
 
