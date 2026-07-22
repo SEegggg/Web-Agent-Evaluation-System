@@ -454,8 +454,12 @@ def main():
         g = r.generalization
         s = r.stability
         print(f"  {r.task_name}:")
-        print(f"    泛化性 → mean={g['mean']:.2f}, std={g['std']:.2f}, success={g['success_rate']:.1%}")
-        print(f"    稳定性 → mean={s['mean']:.2f}, std={s['std']:.2f}, score={s['stability_score']:.2f}")
+        label = "快速测试" if r.is_quick_test else "泛化性"
+        if g.get("format") == "benchmark":
+            print(f"    {label} → pass_rate={g['pass_rate']:.1%}, passed={g['passed']}/{g['total_runs']}")
+        else:
+            print(f"    {label} → mean={g['mean']:.2f}, std={g['std']:.2f}, success={g['success_rate']:.1%}")
+        print(f"    稳定性 → score={s['stability_score']:.2f}")
 
 
 if __name__ == "__main__":

@@ -45,11 +45,13 @@ class RunResult:
     artifacts: Optional[dict] = None
 
     # ── Benchmark-format fields ──
-    format: str = "legacy"  # "legacy" | "benchmark"
+    format: str = "benchmark"  # always benchmark format
     core_passed: Optional[bool] = None
     process_efficiency_scores: dict = field(default_factory=dict)
     resource_robustness_scores: dict = field(default_factory=dict)
     task_specific_scores: dict = field(default_factory=dict)
+    comparison: Optional[dict] = None  # comparison with previous run (if available)
+    overall_comment: str = ""
 
 
 @dataclass
@@ -57,10 +59,11 @@ class TaskReport:
     """Aggregated report for a single task across all runs."""
 
     task_name: str
-    format: str = "legacy"  # "legacy" | "benchmark"
-    generalization: dict = field(default_factory=dict)  # mean, std, success_rate, scores
-    stability: dict = field(default_factory=dict)  # mean, std, stability_score, scores
+    format: str = "benchmark"  # always benchmark format
+    generalization: dict = field(default_factory=dict)
+    stability: dict = field(default_factory=dict)
     runs: list[RunResult] = field(default_factory=list)
+    is_quick_test: bool = False  # True when both gen and stab tests are skipped
 
 
 class WorkflowRunner:
@@ -271,25 +274,28 @@ class WorkflowRunner:
                     )
 
             # ---- Aggregate Results ----
+            is_quick_test = self.skip_generalization and self.skip_stability
             report = self._build_report(
                 task_name=task_file.stem,
                 generalization_runs=generalization_runs,
                 stability_runs=stability_runs,
+                is_quick_test=is_quick_test,
             )
             all_reports.append(report)
 
             # Log summary
             logger.info(f"Task {task_file.stem} summary:")
             if generalization_runs:
+                label = "Quick Test" if report.is_quick_test else "Generalization"
                 if report.format == "benchmark":
                     logger.info(
-                        f"  Generalization: pass_rate={report.generalization['pass_rate']:.1%}, "
+                        f"  {label}: pass_rate={report.generalization['pass_rate']:.1%}, "
                         f"passed={report.generalization.get('passed', 0)}, "
                         f"failed={report.generalization.get('failed', 0)}"
                     )
                 else:
                     logger.info(
-                        f"  Generalization: mean={report.generalization['mean']:.2f}, "
+                        f"  {label}: mean={report.generalization['mean']:.2f}, "
                         f"std={report.generalization['std']:.2f}, "
                         f"success_rate={report.generalization['success_rate']:.1%}"
                     )
@@ -392,41 +398,37 @@ class WorkflowRunner:
 
             # ---- Phase 3: EvaluatorAgent scores ----
             if config.evaluation_criteria:
+                # Load previous result for iterative improvement comparison
+                previous_result = self._load_previous_result(
+                    task_name=task_file.stem,
+                    dataset_name=dataset_name,
+                )
                 scores = self.evaluator.evaluate(
                     evaluation_criteria=config.evaluation_criteria,
                     artifacts=artifacts,
                     task_config=config,
+                    previous_result=previous_result,
                 )
-                fmt = scores.get("format", "legacy")
 
-                if fmt == "benchmark":
-                    core = scores.get("core", {})
-                    overall_score = 10.0 if core.get("passed") else 2.0
-                    dimension_scores = {}
-                    loop_detected = False
-                    core_passed = core.get("passed")
-                    process_efficiency_scores = scores.get("process_efficiency", {})
-                    resource_robustness_scores = scores.get("resource_robustness", {})
-                    task_specific_scores = scores.get("task_specific", {})
-                else:
-                    overall_score = scores.get("overall_score", 0)
-                    dimension_scores = scores.get("dimensions", {})
-                    loop_detected = scores.get("loop_detected", False)
-                    core_passed = None
-                    process_efficiency_scores = {}
-                    resource_robustness_scores = {}
-                    task_specific_scores = {}
+                core = scores.get("core", {})
+                overall_score = 10.0 if core.get("passed") else 2.0
+                core_passed = core.get("passed")
+                process_efficiency_scores = scores.get("process_efficiency", {})
+                resource_robustness_scores = scores.get("resource_robustness", {})
+                task_specific_scores = scores.get("task_specific", {})
+                comparison = scores.get("comparison", {})
+                overall_comment = scores.get("overall_comment", "")
             else:
                 # No evaluation criteria defined — use hard check only
                 scores = None
-                fmt = "legacy"
+                previous_result = None
                 overall_score = 10.0 if status == "completed" else 0.0
-                dimension_scores = {}
-                loop_detected = (status == "dead_loop")
                 core_passed = None
                 process_efficiency_scores = {}
                 resource_robustness_scores = {}
                 task_specific_scores = {}
+                comparison = None
+                overall_comment = ""
 
             # ---- Phase 4: Save debug log ----
             self._save_run_log(
@@ -445,15 +447,15 @@ class WorkflowRunner:
                 seed=seed,
                 status=status,
                 overall_score=overall_score,
-                dimension_scores=dimension_scores,
-                loop_detected=loop_detected,
                 elapsed_seconds=elapsed,
                 artifacts=artifacts,
-                format=fmt,
+                format="benchmark",
                 core_passed=core_passed,
                 process_efficiency_scores=process_efficiency_scores,
                 resource_robustness_scores=resource_robustness_scores,
                 task_specific_scores=task_specific_scores,
+                comparison=comparison,
+                overall_comment=overall_comment,
             )
 
         except Exception as e:
@@ -514,6 +516,69 @@ class WorkflowRunner:
 
         except Exception as e:
             logger.error(f"Failed to extract artifacts: {e}")
+            return None
+
+    # =========================================================================
+    # Previous Result Loading (for iterative improvement comparison)
+    # =========================================================================
+
+    def _load_previous_result(
+        self,
+        task_name: str,
+        dataset_name: str,
+    ) -> Optional[dict]:
+        """
+        Load the most recent previous evaluation result for comparison.
+
+        Matches on task_name (same .md file) + dataset_name (same dataset).
+        Returns the scores dict if a previous run exists, None if first run.
+
+        Args:
+            task_name: task file stem (e.g. "data_analysis")
+            dataset_name: dataset filename (e.g. "iris.csv")
+
+        Returns:
+            dict with benchmark-format scores, or None if no previous run found
+        """
+        try:
+            logs_dir = Path(self.exp_root) / "logs" / task_name
+            if not logs_dir.exists():
+                logger.info(f"No previous logs for task '{task_name}' — first run")
+                return None
+
+            log_dirs = sorted(logs_dir.iterdir(), reverse=True)
+            for log_dir in log_dirs:
+                if not log_dir.is_dir():
+                    continue
+                # Format: {dataset_name}_seed{seed}_{timestamp}
+                if not log_dir.name.startswith(dataset_name):
+                    continue
+                result_file = log_dir / "result.json"
+                if not result_file.exists():
+                    continue
+                try:
+                    data = json.loads(result_file.read_text(encoding="utf-8"))
+                    if data.get("core"):
+                        logger.info(
+                            f"Loaded previous result for {task_name}/{dataset_name} "
+                            f"from {log_dir.name}"
+                        )
+                        return {
+                            "core": data.get("core", {}),
+                            "process_efficiency": data.get("process_efficiency", {}),
+                            "resource_robustness": data.get("resource_robustness", {}),
+                            "task_specific": data.get("task_specific", {}),
+                            "overall_comment": data.get("overall_comment", ""),
+                        }
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"Failed to parse previous result {result_file}: {e}")
+                    continue
+
+            logger.info(f"No previous result for {task_name}/{dataset_name}")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error loading previous result: {e}")
             return None
 
     # =========================================================================
@@ -662,7 +727,7 @@ class WorkflowRunner:
         )
 
         # ── 6. Result summary ──
-        if scores and scores.get("format") == "benchmark":
+        if scores:
             result_data = {
                 "task_name": task_name,
                 "dataset_name": dataset_name,
@@ -674,6 +739,7 @@ class WorkflowRunner:
                 "resource_robustness": scores.get("resource_robustness", {}),
                 "task_specific": scores.get("task_specific", {}),
                 "overall_comment": scores.get("overall_comment", ""),
+                "comparison": scores.get("comparison", {}),
                 "page_url": artifacts.get("page_url", ""),
                 "page_title": artifacts.get("page_title", ""),
                 "elapsed_time_seconds": artifacts.get("elapsed_time_seconds", 0),
@@ -684,11 +750,12 @@ class WorkflowRunner:
                 "dataset_name": dataset_name,
                 "seed": seed,
                 "status": status,
-                "format": "legacy",
-                "loop_detected": scores.get("loop_detected", False) if scores else False,
-                "overall_score": scores.get("overall_score", 0) if scores else 0,
-                "dimensions": scores.get("dimensions", {}) if scores else {},
-                "overall_comment": scores.get("overall_comment", "") if scores else "",
+                "format": "benchmark",
+                "core": {"passed": None, "justification": "No evaluation criteria defined"},
+                "process_efficiency": {},
+                "resource_robustness": {},
+                "task_specific": {},
+                "overall_comment": "",
                 "page_url": artifacts.get("page_url", ""),
                 "page_title": artifacts.get("page_title", ""),
                 "elapsed_time_seconds": artifacts.get("elapsed_time_seconds", 0),
@@ -706,58 +773,35 @@ class WorkflowRunner:
         task_name: str,
         generalization_runs: list[RunResult],
         stability_runs: list[RunResult],
+        is_quick_test: bool = False,
     ) -> TaskReport:
         """Build aggregated TaskReport from individual runs."""
 
         def _compute_stats(runs: list[RunResult]) -> dict:
-            if runs and all(r.format == "benchmark" for r in runs):
-                # Benchmark format: compute pass rate
-                passed = sum(1 for r in runs if r.core_passed)
-                return {
-                    "format": "benchmark",
-                    "pass_rate": passed / len(runs) if runs else 0,
-                    "total_runs": len(runs),
-                    "passed": passed,
-                    "failed": len(runs) - passed,
-                    "statuses": [r.status for r in runs],
-                }
-            # Legacy format: compute mean/std of scores
-            scores = [r.overall_score for r in runs]
-            success_count = sum(1 for r in runs if r.status == "completed")
+            # All runs are benchmark format: compute pass rate
+            passed = sum(1 for r in runs if r.core_passed)
             return {
-                "format": "legacy",
-                "scores": scores,
-                "mean": float(np.mean(scores)) if scores else 0.0,
-                "std": float(np.std(scores)) if scores else 0.0,
-                "success_rate": success_count / len(runs) if runs else 0.0,
-                "num_runs": len(runs),
+                "format": "benchmark",
+                "pass_rate": passed / len(runs) if runs else 0,
+                "total_runs": len(runs),
+                "passed": passed,
+                "failed": len(runs) - passed,
                 "statuses": [r.status for r in runs],
             }
 
         gen_stats = _compute_stats(generalization_runs)
         stab_stats = _compute_stats(stability_runs)
 
-        # Stability score: 1 - normalized std (higher is better)
-        # For benchmark format, use pass_rate consistency instead
-        if stab_stats.get("format") == "benchmark":
-            stab_stats["stability_score"] = stab_stats.get("pass_rate", 0)
-        elif stab_stats.get("std", 0) > 0:
-            # Normalize: std of 0 → score 1.0, std of 5 → score 0.0
-            stab_stats["stability_score"] = max(0.0, 1.0 - stab_stats["std"] / 5.0)
-        else:
-            stab_stats["stability_score"] = 1.0
-
-        # Determine overall format
-        report_format = "benchmark" if (
-            generalization_runs and all(r.format == "benchmark" for r in generalization_runs)
-        ) else "legacy"
+        # Stability score: for benchmark format, use pass_rate consistency
+        stab_stats["stability_score"] = stab_stats.get("pass_rate", 0)
 
         return TaskReport(
             task_name=task_name,
-            format=report_format,
+            format="benchmark",
             generalization=gen_stats,
             stability=stab_stats,
             runs=generalization_runs + stability_runs,
+            is_quick_test=is_quick_test,
         )
 
     # =========================================================================
@@ -801,27 +845,21 @@ class WorkflowRunner:
                     "error": r.error_message,
                     "format": r.format,
                 }
-                if r.format == "benchmark":
-                    run_entry["core_passed"] = r.core_passed
-                    run_entry["process_efficiency"] = {
-                        k: v.get("score", v) if isinstance(v, dict) else v
-                        for k, v in r.process_efficiency_scores.items()
-                    }
-                    run_entry["resource_robustness"] = {
-                        k: v.get("score", v) if isinstance(v, dict) else v
-                        for k, v in r.resource_robustness_scores.items()
-                    }
-                    run_entry["task_specific"] = {
-                        k: v.get("score", v) if isinstance(v, dict) else v
-                        for k, v in r.task_specific_scores.items()
-                    }
-                else:
-                    run_entry["overall_score"] = r.overall_score
-                    run_entry["dimension_scores"] = {
-                        k: v.get("score", v) if isinstance(v, dict) else v
-                        for k, v in r.dimension_scores.items()
-                    }
-                    run_entry["loop_detected"] = r.loop_detected
+                run_entry["core_passed"] = r.core_passed
+                run_entry["process_efficiency"] = {
+                    k: v.get("score", v) if isinstance(v, dict) else v
+                    for k, v in r.process_efficiency_scores.items()
+                }
+                run_entry["resource_robustness"] = {
+                    k: v.get("score", v) if isinstance(v, dict) else v
+                    for k, v in r.resource_robustness_scores.items()
+                }
+                run_entry["task_specific"] = {
+                    k: v.get("score", v) if isinstance(v, dict) else v
+                    for k, v in r.task_specific_scores.items()
+                }
+                run_entry["comparison"] = r.comparison
+                run_entry["overall_comment"] = r.overall_comment
                 json_runs.append(run_entry)
 
             json_data.append(
@@ -857,7 +895,7 @@ class WorkflowRunner:
                 ]
             )
             for report in reports:
-                gen_count = report.generalization.get("num_runs", len(report.generalization.get("scores", [])))
+                gen_count = report.generalization.get("total_runs", 0)
                 for i, r in enumerate(report.runs):
                     run_type = (
                         "generalization"
@@ -907,15 +945,19 @@ class WorkflowRunner:
             lines.append(f"  【任务】{report.task_name}")
             lines.append("─" * 60)
 
-            # ── 泛化性测试 ──
+            # ── 测试结果 ──
+            if report.is_quick_test:
+                gen_title = "快速测试（seed=42, iris.csv）"
+            else:
+                gen_title = "泛化性测试（固定 seed=42，变数据集）"
             lines.extend(self._format_test_section(
-                title="泛化性测试（固定 seed=42，变数据集）",
+                title=gen_title,
                 stats=report.generalization,
-                runs=report.runs[:report.generalization.get("num_runs", 0)],
+                runs=report.runs[:report.generalization.get("total_runs", 0)],
             ))
 
             # ── 稳定性测试 ──
-            gen_count = report.generalization.get("num_runs", 0)
+            gen_count = report.generalization.get("total_runs", 0)
             lines.extend(self._format_test_section(
                 title="稳定性测试（固定数据集，变 seed）",
                 stats=report.stability,
@@ -937,19 +979,11 @@ class WorkflowRunner:
             lines.append("    (未执行)")
             return lines
 
-        is_benchmark = stats.get("format") == "benchmark"
-
-        # 汇总
-        if is_benchmark:
-            pass_rate = stats.get("pass_rate", 0)
-            passed = stats.get("passed", 0)
-            failed = stats.get("failed", 0)
-            lines.append(f"    通过率: {pass_rate:.0%}  |  通过: {passed}  |  失败: {failed}")
-        else:
-            mean_val = stats.get("mean", 0)
-            std_val = stats.get("std", 0)
-            success_rate = stats.get("success_rate", 0)
-            lines.append(f"    平均分: {mean_val:.1f}/10  |  标准差: {std_val:.2f}  |  成功率: {success_rate:.0%}")
+        # 汇总 (benchmark format)
+        pass_rate = stats.get("pass_rate", 0)
+        passed = stats.get("passed", 0)
+        failed = stats.get("failed", 0)
+        lines.append(f"    通过率: {pass_rate:.0%}  |  通过: {passed}  |  失败: {failed}")
 
         # 稳定性额外指标
         if "stability_score" in stats:
@@ -963,59 +997,67 @@ class WorkflowRunner:
             if r.status == "completed":
                 lines.append(f"        状态: {status_label}")
 
-                if r.format == "benchmark":
-                    # Benchmark format: show core pass/fail + sub-dimensions
-                    core_label = "✅ PASS" if r.core_passed else "❌ FAIL"
-                    lines.append(f"        核心判定: {core_label}")
+                # Benchmark format: show core pass/fail + sub-dimensions
+                core_label = "✅ PASS" if r.core_passed else "❌ FAIL"
+                lines.append(f"        核心判定: {core_label}")
 
-                    # Process efficiency
-                    if r.process_efficiency_scores:
-                        lines.append(f"        过程与效率指标:")
-                        for dim_name, dim_data in r.process_efficiency_scores.items():
-                            if isinstance(dim_data, dict):
-                                score = dim_data.get("score", "?")
-                                reason = dim_data.get("justification", "")
-                                lines.append(f"          - {dim_name}: {score}/10")
-                                if reason:
-                                    lines.append(f"            理由: {reason}")
+                # Process efficiency
+                if r.process_efficiency_scores:
+                    lines.append(f"        过程与效率指标:")
+                    for dim_name, dim_data in r.process_efficiency_scores.items():
+                        if isinstance(dim_data, dict):
+                            score = dim_data.get("score", "?")
+                            reason = dim_data.get("justification", "")
+                            lines.append(f"          - {dim_name}: {score}/10")
+                            if reason:
+                                lines.append(f"            理由: {reason}")
 
-                    # Resource robustness
-                    if r.resource_robustness_scores:
-                        lines.append(f"        资源与鲁棒性指标:")
-                        for dim_name, dim_data in r.resource_robustness_scores.items():
-                            if isinstance(dim_data, dict):
-                                score = dim_data.get("score", "?")
-                                reason = dim_data.get("justification", "")
-                                lines.append(f"          - {dim_name}: {score}/10")
-                                if reason:
-                                    lines.append(f"            理由: {reason}")
+                # Resource robustness
+                if r.resource_robustness_scores:
+                    lines.append(f"        资源与鲁棒性指标:")
+                    for dim_name, dim_data in r.resource_robustness_scores.items():
+                        if isinstance(dim_data, dict):
+                            score = dim_data.get("score", "?")
+                            reason = dim_data.get("justification", "")
+                            lines.append(f"          - {dim_name}: {score}/10")
+                            if reason:
+                                lines.append(f"            理由: {reason}")
 
-                    # Task specific
-                    if r.task_specific_scores:
-                        lines.append(f"        任务专项指标:")
-                        for dim_name, dim_data in r.task_specific_scores.items():
-                            if isinstance(dim_data, dict):
-                                score = dim_data.get("score", "?")
-                                reason = dim_data.get("justification", "")
-                                lines.append(f"          - {dim_name}: {score}/10")
-                                if reason:
-                                    lines.append(f"            理由: {reason}")
-                else:
-                    # Legacy format
-                    lines.append(f"        综合得分: {r.overall_score:.1f}/10")
-                    if r.loop_detected:
-                        lines.append(f"        ⚠️ 检测到死循环")
-                    if r.dimension_scores:
-                        lines.append(f"        各维度评分:")
-                        for dim_name, dim_data in r.dimension_scores.items():
-                            if isinstance(dim_data, dict):
-                                score = dim_data.get("score", "?")
-                                reason = dim_data.get("justification", "")
-                                lines.append(f"          - {dim_name}: {score}/10")
-                                if reason:
-                                    lines.append(f"            理由: {reason}")
-                            else:
-                                lines.append(f"          - {dim_name}: {dim_data}/10")
+                # Task specific
+                if r.task_specific_scores:
+                    lines.append(f"        任务专项指标:")
+                    for dim_name, dim_data in r.task_specific_scores.items():
+                        if isinstance(dim_data, dict):
+                            score = dim_data.get("score", "?")
+                            reason = dim_data.get("justification", "")
+                            lines.append(f"          - {dim_name}: {score}/10")
+                            if reason:
+                                lines.append(f"            理由: {reason}")
+
+                # Comparison with previous run
+                if r.comparison:
+                    comparison = r.comparison
+                    trend = comparison.get("overall_trend", "first_run")
+                    trend_labels = {
+                        "improving": "📈 改进中",
+                        "declining": "📉 退化中",
+                        "stable": "➡️ 持平",
+                        "first_run": "🆕 首次运行",
+                    }
+                    lines.append(f"        迭代对比: {trend_labels.get(trend, trend)}")
+
+                    for label, key in [
+                        ("✅ 已修复问题", "fixed_issues"),
+                        ("⚠️ 新增问题", "new_issues"),
+                        ("🔻 退步(回归)", "regressions"),
+                        ("📈 改进项", "improvements"),
+                        ("⏸️ 仍存在的问题", "unchanged_issues"),
+                    ]:
+                        items = comparison.get(key, [])
+                        if items:
+                            lines.append(f"        {label}:")
+                            for item in items:
+                                lines.append(f"          - {item}")
 
             else:
                 # 失败：显示状态和原因

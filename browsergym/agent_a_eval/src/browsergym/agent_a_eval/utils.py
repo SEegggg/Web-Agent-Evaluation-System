@@ -36,15 +36,15 @@ class WorkflowConfig:
     max_execution_time_minutes: int = 15  # default, can be overridden per task
     available_datasets: list[str] = field(default_factory=list)
     steps: str = ""  # natural language task steps
-    evaluation_criteria: str = ""  # legacy: raw evaluation criteria string (backward compat)
+    evaluation_criteria: str = ""  # raw evaluation criteria string (backward compat)
 
-    # ── New benchmark-format fields ──
+    # ── Benchmark-format fields ──
     task_description: str = ""  # parsed from ## 任务描述
-    core_criteria: str = ""  # parsed from ### 核心指标
-    task_specific_metrics: str = ""  # parsed from ### 任务专项指标
-    process_efficiency_criteria: str = ""  # parsed from ### 过程与效率指标
-    resource_robustness_criteria: str = ""  # parsed from ### 资源与鲁棒性指标
-    is_benchmark_format: bool = False  # True when ### sub-sections detected in 评估标准
+    core_criteria: str = ""  # parsed from ### 核心指标（task-specific hard constraints）
+    task_specific_metrics: str = ""  # parsed from ### 任务专项指标（domain-specific quality metrics）
+    is_benchmark_format: bool = False  # True when ### 核心指标 sub-section detected
+    # NOTE: process_efficiency and resource_robustness dimensions are framework-level,
+    # defined in evaluator_agent_prompt.md — NOT stored in per-task config.
 
     @classmethod
     def from_markdown(cls, path: str | Path) -> "WorkflowConfig":
@@ -80,26 +80,17 @@ class WorkflowConfig:
             elif "评估标准" in header_lower:
                 config.evaluation_criteria = body.strip()
 
-                # Check for benchmark-format sub-sections (### headers with specific keywords)
+                # Check for benchmark-format sub-sections (### headers)
                 sub_sections = cls._split_h3_sections(body)
-                benchmark_matched = False
                 for sub_header, sub_body in sub_sections.items():
                     header_lower_h3 = sub_header.lower().strip()
                     if "核心指标" in header_lower_h3 or "成功率" in header_lower_h3:
                         config.core_criteria = sub_body.strip()
-                        benchmark_matched = True
-                    elif "过程" in header_lower_h3 or "效率" in header_lower_h3:
-                        config.process_efficiency_criteria = sub_body.strip()
-                        benchmark_matched = True
-                    elif "资源" in header_lower_h3 or "鲁棒" in header_lower_h3:
-                        config.resource_robustness_criteria = sub_body.strip()
-                        benchmark_matched = True
+                        config.is_benchmark_format = True
                     elif "专项" in header_lower_h3 or "任务特定" in header_lower_h3:
                         config.task_specific_metrics = sub_body.strip()
-                        benchmark_matched = True
-                config.is_benchmark_format = benchmark_matched
-                # If no benchmark keywords matched, is_benchmark_format stays False,
-                # evaluation_criteria is kept as legacy raw string
+                # process_efficiency and resource_robustness are framework-level
+                # and defined in evaluator_agent_prompt.md — not parsed here
 
         return config
 
