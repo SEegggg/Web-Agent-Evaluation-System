@@ -49,6 +49,32 @@ login:
   user_data_dir: "./browser_profile"  # 持久化浏览器 profile 目录
 
 # ──────────────────────────────────────────────────────────
+# Agent A 后端 API 配置（网络拦截模式，替代 DOM 抓取）
+# ──────────────────────────────────────────────────────────
+# ★ Playwright 会拦截匹配这些模式的 HTTP 响应，直接提取 Agent A 的返回内容。
+# 支持 glob 通配符: * 匹配单段，** 匹配任意深度。
+# 留空 = 使用内置默认值（覆盖常见 API），捕获不到则自动回退到 DOM 提取。
+#
+# 元景工业时序分析平台 API 端点:
+#   POST /api/agent/chat            — Agent 对话 (SSE 流式)
+#   POST /api/auth/login            — 登录
+#   POST /api/projects              — 创建项目
+#   POST /api/datasets              — 注册数据集
+#   POST /api/models                — 注册模型
+#   GET  /api/agent/sessions/{id}/history — 历史消息
+#   GET  /api/usage/sessions/{id}   — 用量查询
+agent_a:
+  api_patterns:
+    - "/api/agent/**"           # Agent 对话、审批、文件、会话等全部接口
+    - "/api/auth/**"            # 登录/注册/登出
+    - "/api/projects/**"        # 项目管理
+    - "/api/datasets/**"        # 数据集管理
+    - "/api/models/**"          # 模型管理
+    - "/api/artifacts/**"       # 产物
+    - "/api/usage/**"           # 用量统计
+    - "/api/model-iterations/**" # 模型迭代
+
+# ──────────────────────────────────────────────────────────
 # 浏览器配置
 # ──────────────────────────────────────────────────────────
 browser:

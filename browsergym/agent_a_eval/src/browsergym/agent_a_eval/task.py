@@ -5,6 +5,7 @@ Drives a BrowserGym agent through a multi-step workflow defined in a .md file,
 then collects artifacts for independent LLM evaluation.
 """
 
+import json
 import logging
 import os
 import time
@@ -15,6 +16,7 @@ import playwright.sync_api
 
 from browsergym.core.task import AbstractBrowserTask
 
+from .network_interceptor import NetworkInterceptor
 from .utils import LoopDetector, PageStateChecker, WorkflowConfig
 
 logger = logging.getLogger(__name__)
@@ -128,6 +130,11 @@ class WorkflowTask(AbstractBrowserTask):
         # Cache for loop detector (dom_object is extracted in _get_obs but not in validate)
         self._last_dom_object: dict = None
 
+        # ── Network interceptor — captures Agent A backend API responses ──
+        # Patterns come from AGENT_A_API_PATTERNS env var or config.yaml agent_a.api_patterns.
+        # Attached in setup() after page.goto(), detached in teardown().
+        self.network_interceptor: NetworkInterceptor = NetworkInterceptor.from_env()
+
         logger.info(
             f"WorkflowTask initialized: {self.config.title} "
             f"(dataset_index={dataset_index}, seed={seed})"
@@ -150,6 +157,14 @@ class WorkflowTask(AbstractBrowserTask):
         )
         logger.info(f"Navigating to Agent A: {agent_a_url}")
         page.goto(agent_a_url, timeout=30000)
+
+        # ── Attach network interceptor (AFTER goto, BEFORE agent interaction) ──
+        # Captures Agent A backend API responses (JSON + SSE streams) at the network
+        # layer — BrowserGym-native approach, more reliable than DOM scraping.
+        self.network_interceptor.attach(page)
+        logger.info(
+            f"NetworkInterceptor active — {len(self.network_interceptor.patterns)} pattern(s)"
+        )
 
         # Resolve datasets directory
         datasets_dir = os.environ.get(
@@ -242,6 +257,7 @@ class WorkflowTask(AbstractBrowserTask):
 
     def teardown(self) -> None:
         """Clean up. Most resources are handled by BrowserEnv."""
+        self.network_interceptor.detach()
         self.artifacts = None
         self.episode_screenshots = []
         self._last_dom_object = None
@@ -622,9 +638,20 @@ class WorkflowTask(AbstractBrowserTask):
             logger.error(f"Failed to capture final screenshot: {e}")
             screenshot_b64 = None
 
-        # Extract Agent A's chat output from the page (the actual responses,
-        # not the driver agent's actions)
-        agent_a_responses = self._extract_agent_a_responses(page)
+        # ── Extract Agent A's responses ──
+        # Primary: network interception (BrowserGym-native — captures JSON + SSE)
+        # Fallback: DOM extraction (legacy — fragile, UI-dependent)
+        agent_a_responses = self._extract_agent_a_responses_from_network()
+        if agent_a_responses:
+            logger.info(
+                f"Extracted {len(agent_a_responses)} response(s) from network interception"
+            )
+        else:
+            logger.warning(
+                "No network responses captured — falling back to DOM extraction. "
+                "Verify AGENT_A_API_PATTERNS matches Agent A backend API URLs."
+            )
+            agent_a_responses = self._extract_agent_a_responses(page)
 
         # Filter chat_messages to relevant entries
         filtered_chat = [
@@ -657,9 +684,167 @@ class WorkflowTask(AbstractBrowserTask):
 
         return artifacts
 
+    # =========================================================================
+    # Network-based extraction (primary — BrowserGym-native)
+    # =========================================================================
+
+    def _extract_agent_a_responses_from_network(self) -> list[dict]:
+        """
+        Extract Agent A's responses from intercepted network traffic.
+
+        Handles both regular JSON responses and SSE (Server-Sent Events) streams.
+        For SSE, uses the pre-parsed `sse_text` (concatenated assistant_text events)
+        and `sse_events` (individual parsed frames).
+
+        Returns:
+            list of dicts compatible with EvaluatorAgent's expected format:
+            {selector, index, text, source: "network", ...}
+        """
+        raw_responses = self.network_interceptor.get_responses()
+        if not raw_responses:
+            return []
+
+        results = []
+        seen_texts = set()
+
+        for i, resp in enumerate(raw_responses):
+            short_url = self._short_url(resp["url"])
+
+            # ── SSE responses (Agent A chat stream) ──
+            if resp.get("is_sse") and resp.get("sse_text"):
+                text = resp["sse_text"]
+                if len(text) > 10 and text[:100] not in seen_texts:
+                    seen_texts.add(text[:100])
+                    # Include event summary for evaluator context
+                    event_summary = self._summarize_sse_events(
+                        resp.get("sse_events", [])
+                    )
+                    results.append({
+                        "selector": f"network:sse:{short_url}",
+                        "index": i,
+                        "text": text[:5000],
+                        "source": "network",
+                        "content_type": "text/event-stream",
+                        "event_summary": event_summary,
+                        "sse_event_count": len(resp.get("sse_events", [])),
+                    })
+
+            # ── JSON responses ──
+            elif resp.get("body_json") is not None:
+                text = self._extract_text_from_json(resp["body_json"])
+                if text and text[:100] not in seen_texts:
+                    seen_texts.add(text[:100])
+                    results.append({
+                        "selector": f"network:json:{short_url}",
+                        "index": i,
+                        "text": text[:5000],
+                        "source": "network",
+                        "content_type": resp.get("content_type", ""),
+                        "status": resp.get("status"),
+                    })
+
+            # ── Plain text responses ──
+            elif resp.get("body_text"):
+                text = resp["body_text"]
+                if len(text) > 10 and text[:100] not in seen_texts:
+                    seen_texts.add(text[:100])
+                    results.append({
+                        "selector": f"network:text:{short_url}",
+                        "index": i,
+                        "text": text[:5000],
+                        "source": "network",
+                        "content_type": resp.get("content_type", ""),
+                    })
+
+        return results
+
+    @staticmethod
+    def _extract_text_from_json(body: dict) -> str:
+        """
+        Extract meaningful text from Agent A JSON response bodies.
+
+        Handles common API response formats:
+        - Login: {"token": "...", "user": {...}}
+        - Project: {"id": "...", "name": "..."}
+        - Dataset: {"id": "...", "name": "...", "columns": [...]}
+        - History: [{"role": "user", "content": "..."}, ...]
+        - Error: {"detail": "..."}
+
+        Returns the extracted text, or empty string if nothing useful found.
+        """
+        # Error messages
+        if "detail" in body and isinstance(body["detail"], str):
+            return body["detail"]
+
+        # History array (user-visible messages)
+        if isinstance(body, list):
+            parts = []
+            for item in body[:20]:
+                if isinstance(item, dict):
+                    role = item.get("role", "")
+                    content = item.get("content", "")
+                    if role and content:
+                        parts.append(f"[{role}] {content}")
+            if parts:
+                return "\n".join(parts)
+
+        # Descriptive objects (datasets, models, projects)
+        if isinstance(body, dict):
+            name = body.get("name", "")
+            desc = body.get("description", "")
+            if name:
+                return f"{name}: {desc}" if desc else name
+            # Auth
+            if "token" in body:
+                user = body.get("user", {})
+                return f"login ok: {user.get('username', '?')}"
+            # Session creation
+            if "session_id" in body:
+                return f"session: {body['session_id']}"
+
+        return ""
+
+    @staticmethod
+    def _summarize_sse_events(events: list[dict]) -> str:
+        """
+        Create a concise summary of SSE event types for evaluator context.
+
+        Example: "run_started, assistant_text(x12), tool_call_started(x3), run_completed"
+        """
+        from collections import Counter
+
+        type_counts = Counter(
+            e.get("type", "raw") for e in events if isinstance(e, dict)
+        )
+        parts = []
+        for evt_type, count in sorted(type_counts.items()):
+            if count > 1:
+                parts.append(f"{evt_type}(x{count})")
+            else:
+                parts.append(evt_type)
+        return ", ".join(parts) if parts else "(empty)"
+
+    @staticmethod
+    def _short_url(url: str) -> str:
+        """Extract a short path identifier from a full URL."""
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            return parsed.path or url[:80]
+        except Exception:
+            return url[:80]
+
+    # =========================================================================
+    # DOM-based extraction (fallback — legacy)
+    # =========================================================================
+
     def _extract_agent_a_responses(self, page: playwright.sync_api.Page) -> list[dict]:
         """
-        Extract Agent A's visible responses from the page DOM.
+        [FALLBACK] Extract Agent A's visible responses from the page DOM.
+
+        This is the LEGACY method. Primary extraction uses network interception
+        (_extract_agent_a_responses_from_network above).
 
         Strategy:
         1. Try known selectors first (specific to common chat UI patterns)

@@ -281,6 +281,13 @@ def setup_env(cfg: dict, config_path: Path):
         )
         print(f"[CONFIG] Cookie 持久化: {os.environ['AGENT_A_EVAL_STORAGE_STATE_PATH']}")
 
+    # Agent A 后端 API 拦截模式（网络拦截替代 DOM 抓取）
+    agent_a = cfg.get("agent_a", {})
+    api_patterns = agent_a.get("api_patterns", [])
+    if api_patterns:
+        os.environ["AGENT_A_API_PATTERNS"] = ",".join(api_patterns)
+        print(f"[CONFIG] API 拦截: {len(api_patterns)} 个模式 ({', '.join(api_patterns[:3])}{'...' if len(api_patterns) > 3 else ''})")
+
 
 def create_agent_args(cfg: dict):
     """
