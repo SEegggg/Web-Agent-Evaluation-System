@@ -97,7 +97,11 @@ class WorkflowTask(AbstractBrowserTask):
         super().__init__(seed)
 
         # Browser configuration
-        self.viewport = {"width": 1280, "height": 900}
+        # Allow viewport override via env vars (e.g. screen too small)
+        import os
+        vp_w = int(os.environ.get("AGENT_A_EVAL_VIEWPORT_WIDTH", "1280"))
+        vp_h = int(os.environ.get("AGENT_A_EVAL_VIEWPORT_HEIGHT", "720"))
+        self.viewport = {"width": vp_w, "height": vp_h}
         self.slow_mo = 500  # ms — slightly slower for visibility
         self.timeout = 10000  # ms per Playwright action
 

@@ -52,3 +52,45 @@
   "overall_comment": "整体评价（1-3句话，总结Agent A的表现亮点和主要问题）"
 }
 ```
+
+---
+
+## 基准测试模式 (Benchmark Mode)
+
+当评估标准包含四个子指标类别（核心/过程与效率/资源与鲁棒性/任务专项）时，使用以下原则：
+
+### 核心判定原则（最重要）
+
+1. **核心指标 (PASS/FAIL) 是二元判定**，不应折中——要么任务完成了，要么没有。
+2. **严格区分失败归因**：核心指标只衡量"Agent A 是否按要求完成了该做的事"，不衡量"最终结果有多好"。
+   - 如果 Agent A 正确完成了所有流程，但最终数值不好（如模型 RMSE 高），而这是由人类指定的数据集/模型类型导致的 → 判定为 **PASS**
+   - 如果 Agent A 遗漏了步骤、使用错误方法、输出不完整 → 判定为 **FAIL**
+   - 当无法确定失败原因时，优先检查 Agent A 的输出中是否有逻辑错误或遗漏步骤
+3. **过程与效率指标**评估驱动 Agent 的操作质量（辅助参考，不影响核心判定）。
+4. **资源与鲁棒性指标**评估整体资源消耗和异常处理能力（辅助参考，不影响核心判定）。
+5. **任务专项指标**根据任务类型定制，评估 Agent A 在该领域的专业能力。只对任务描述中列出的维度评分，不自行添加。
+
+### Benchmark 输出格式
+
+```json
+{
+  "core": {
+    "passed": true,
+    "justification": "判定通过/失败的具体理由。必须指出：1) Agent A 是否正确完成了所有必要步骤；2) 若失败，原因是 Agent A 的问题还是外部因素（数据、指令、基础设施等）"
+  },
+  "process_efficiency": {
+    "tool_call_accuracy": {"score": 8, "justification": "..."},
+    "trajectory_efficiency": {"score": 7, "justification": "..."},
+    "redundant_operation_rate": {"score": 6, "justification": "..."}
+  },
+  "resource_robustness": {
+    "token_consumption_cost": {"score": 7, "justification": "..."},
+    "task_execution_latency": {"score": 8, "justification": "..."},
+    "self_correction_rate": {"score": 6, "justification": "..."}
+  },
+  "task_specific": {
+    "指标名称": {"score": 7, "justification": "..."}
+  },
+  "overall_comment": "一句话总结整体表现"
+}
+```
