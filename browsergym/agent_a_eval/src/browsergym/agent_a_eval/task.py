@@ -69,7 +69,7 @@ class WorkflowTask(AbstractBrowserTask):
         return self._HARD_CHECK_RULES.get(self.task_name, "")
 
     # Path to the driver agent prompt file (relative to agent_a_eval package)
-    _DRIVER_PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "driver_agent_prompt.md"
+    _DRIVER_PROMPT_PATH = Path(__file__).resolve().parents[3] / "prompts" / "driver_agent_prompt.md"
 
     @classmethod
     def _load_driver_prompt(cls) -> str:
@@ -150,7 +150,7 @@ class WorkflowTask(AbstractBrowserTask):
         # Resolve datasets directory
         datasets_dir = os.environ.get(
             "AGENT_A_EVAL_DATASETS_DIR",
-            str(Path(__file__).parent.parent.parent.parent / "test_data" / "datasets"),
+            str(Path(__file__).resolve().parents[3] / "test_data" / "datasets"),
         )
         datasets_dir = str(Path(datasets_dir).resolve())
 
