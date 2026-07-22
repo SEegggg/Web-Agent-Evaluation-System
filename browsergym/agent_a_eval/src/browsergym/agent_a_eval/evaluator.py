@@ -160,7 +160,7 @@ class EvaluatorAgent:
 
     # Path to the evaluator system prompt file
     _EVAL_PROMPT_PATH = (
-        Path(__file__).parent.parent.parent.parent / "prompts" / "evaluator_agent_prompt.md"
+        Path(__file__).resolve().parents[3] / "prompts" / "evaluator_agent_prompt.md"
     )
 
     @classmethod

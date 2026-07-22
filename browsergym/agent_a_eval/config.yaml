@@ -2,8 +2,8 @@
 # Agent A 自动评审系统 — 配置文件
 # ============================================================
 # 使用方法:
-#   python run_eval.py                        # 使用默认配置
-#   python run_eval.py --config my_config.yaml # 使用自定义配置
+#   python scripts/run_eval.py                        # 使用默认配置
+#   python scripts/run_eval.py --config my_config.yaml # 使用自定义配置
 #
 # 所有路径如未指定绝对路径，则相对于本配置文件所在目录解析。
 #
