@@ -22,6 +22,48 @@ import os
 import sys
 from pathlib import Path
 
+
+# ============================================================
+# .env file loader (no external dependency needed)
+# ============================================================
+
+def load_dotenv(dotenv_path: Path) -> None:
+    """
+    Load KEY=VALUE pairs from a .env file into os.environ.
+
+    - Lines starting with # are treated as comments
+    - Blank lines are skipped
+    - Values can be quoted (single or double quotes)
+    - Existing environment variables are NEVER overwritten
+      (already-set env vars take highest priority)
+    """
+    if not dotenv_path.exists():
+        return
+
+    loaded = 0
+    with open(dotenv_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, sep, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+
+            # Remove surrounding quotes (single or double)
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+
+            # Only set if not already in environment
+            if key not in os.environ:
+                os.environ[key] = value
+                loaded += 1
+
+    if loaded > 0:
+        print(f"[DOTENV] Loaded {loaded} variable(s) from {dotenv_path}")
+
 # 把项目根目录加到 sys.path，使 demo_agent 模块可被导入
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -211,13 +253,16 @@ def setup_env(cfg: dict, config_path: Path):
         os.environ["AGENT_A_EVAL_TASKS_DIR"] = str(tasks_dir)
         print(f"[CONFIG] 任务目录: {tasks_dir}")
 
-    # 登录凭据
+    # 登录凭据 — config 优先，为空时从环境变量读取
     login = cfg.get("login", {})
-    if login.get("username") and login.get("password"):
-        os.environ["AGENT_A_EVAL_LOGIN_URL"] = login.get("url", "")
-        os.environ["AGENT_A_EVAL_LOGIN_USERNAME"] = login["username"]
-        os.environ["AGENT_A_EVAL_LOGIN_PASSWORD"] = login["password"]
-        print(f"[CONFIG] 登录配置: 用户名={login['username']}")
+    username = login.get("username") or os.environ.get("AGENT_A_EVAL_LOGIN_USERNAME", "")
+    password = login.get("password") or os.environ.get("AGENT_A_EVAL_LOGIN_PASSWORD", "")
+    login_url = login.get("url") or os.environ.get("AGENT_A_EVAL_LOGIN_URL", "")
+    if username and password:
+        os.environ["AGENT_A_EVAL_LOGIN_URL"] = login_url
+        os.environ["AGENT_A_EVAL_LOGIN_USERNAME"] = username
+        os.environ["AGENT_A_EVAL_LOGIN_PASSWORD"] = password
+        print(f"[CONFIG] 登录配置: 用户名={username}")
 
     # 持久化浏览器 profile 目录（优先使用 user_data_dir）
     user_data_dir = login.get("user_data_dir", "")
@@ -320,6 +365,10 @@ def main():
     else:
         config_path = Path(__file__).parent / "config.yaml"
 
+    # 加载 .env 文件（优先级低于已设置的环境变量）
+    dotenv_path = config_path.parent / ".env"
+    load_dotenv(dotenv_path)
+
     # 加载配置
     config = load_config(config_path)
 
@@ -345,6 +394,10 @@ def main():
     from browsergym.agent_a_eval.runner import WorkflowRunner
 
     agent_args = create_agent_args(config)
+
+    # 评审 Agent 的 API key（与驱动 Agent 分开，可能使用不同的 key/provider）
+    evaluator_cfg = config.get("evaluator", {})
+    _setup_api_env(evaluator_cfg)
 
     eval_cfg = config.get("evaluation", {})
     paths = config.get("paths", {})

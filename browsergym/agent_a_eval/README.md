@@ -82,6 +82,37 @@ OK: 9 tasks registered
 
 ## 二、配置说明
 
+### 🔐 敏感信息管理（.env）
+
+API Key、登录密码等敏感信息**不要**写在 [config.yaml](config.yaml) 中，而应通过 `.env` 文件管理：
+
+```bash
+# 1. 复制模板
+cp .env.example .env
+
+# 2. 编辑 .env，填入真实密钥
+# .env 已加入 .gitignore，不会被提交到 Git
+```
+
+**配置优先级**（高 → 低）：
+1. 系统环境变量（`export` / `set` 设置的）
+2. 同目录下的 `.env` 文件
+3. `config.yaml` 中的值
+
+### 环境变量对照表
+
+| 用途 | 环境变量 | 说明 |
+|------|---------|------|
+| OpenAI API Key | `OPENAI_API_KEY` | 驱动/评审 Agent 共用 |
+| OpenAI API 地址 | `OPENAI_BASE_URL` | 使用 DeepSeek 等兼容接口时设置 |
+| Anthropic API Key | `ANTHROPIC_API_KEY` | 驱动/评审 Agent 共用 |
+| Anthropic API 地址 | `ANTHROPIC_BASE_URL` | 自定义 Anthropic 端点 |
+| 登录 URL | `AGENT_A_EVAL_LOGIN_URL` | Agent A 的登录页面地址 |
+| 登录用户名 | `AGENT_A_EVAL_LOGIN_USERNAME` | Agent A 登录用户名 |
+| 登录密码 | `AGENT_A_EVAL_LOGIN_PASSWORD` | Agent A 登录密码 |
+
+### config.yaml 结构
+
 所有配置集中在 [config.yaml](config.yaml) 中，分为 6 个部分：
 
 ### driver_agent — 驱动 Agent LLM
