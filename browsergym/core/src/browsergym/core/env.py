@@ -1,4 +1,5 @@
 import copy
+import ctypes
 import logging
 import re
 import time
@@ -47,6 +48,39 @@ def _try_to_extract_legacy_goal(goal: list):
     legacy_goal = "\n".join(legacy_goal_strings)
 
     return legacy_goal
+
+
+def get_screen_size() -> tuple[int, int]:
+    """Detect the primary monitor's width and height in pixels.
+
+    Uses the Win32 API on Windows and Tkinter as a cross-platform fallback.
+    Returns (1920, 1080) if detection fails entirely.
+    """
+    if hasattr(ctypes, "windll"):
+        try:
+            user32 = ctypes.windll.user32
+            w = user32.GetSystemMetrics(0)   # SM_CXSCREEN
+            h = user32.GetSystemMetrics(1)   # SM_CYSCREEN
+            if w > 0 and h > 0:
+                return w, h
+        except Exception:
+            pass
+
+    # Cross-platform fallback via tkinter
+    try:
+        import tkinter as _tk
+        root = _tk.Tk()
+        root.withdraw()
+        w = root.winfo_screenwidth()
+        h = root.winfo_screenheight()
+        root.destroy()
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+
+    # Last resort
+    return 1920, 1080
 
 
 class BrowserEnv(gym.Env, ABC):
@@ -259,19 +293,39 @@ class BrowserEnv(gym.Env, ABC):
         locale = override_property(self.task, self, "locale")
         timezone_id = override_property(self.task, self, "timezone_id")
 
+        # ── Adapt layout to the actual screen ──
+        if not self.headless:
+            screen_w, screen_h = get_screen_size()
+            CHAT_WIDTH = 480
+            TASKBAR_MARGIN = 60  # leave room for the Windows taskbar
+
+            # Clamp the main viewport so it fits alongside the chat window
+            vp_w = min(viewport["width"], screen_w - CHAT_WIDTH)
+            vp_h = min(viewport["height"], screen_h - TASKBAR_MARGIN)
+            viewport = {"width": vp_w, "height": vp_h}
+
+            chat_w = CHAT_WIDTH
+            chat_h = min(max(vp_h, 720), screen_h - TASKBAR_MARGIN)
+            chat_position = (vp_w, 0)  # right next to the main window
+        else:
+            chat_w = 500
+            chat_h = max(viewport["height"], 800)
+            chat_position = None
+
         # use the global Playwright instance
         pw: playwright.sync_api.Playwright = _get_global_playwright()
         # important: change playwright's test id attribute from "data-testid" to "bid"
         pw.selectors.set_test_id_attribute(BROWSERGYM_ID_ATTRIBUTE)
-        args = [
-            (
-                f"--window-size={viewport['width']},{viewport['height']}"
-                if self.resizeable_window
-                else None
-            ),
-            "--disable-features=OverlayScrollbars,ExtendedOverlayScrollbars",  # otherwise the screenshot doesn't see the scrollbars
-        ]
-        args = [arg for arg in args if arg is not None]  # Remove None values
+
+        # Chromium args: position the main window at the top-left
+        args = []
+        if not self.headless:
+            if self.resizeable_window:
+                args.append(f"--window-size={viewport['width']},{viewport['height']}")
+            args.append("--window-position=0,0")
+        args.append(
+            "--disable-features=OverlayScrollbars,ExtendedOverlayScrollbars"
+        )  # otherwise the screenshot doesn't see the scrollbars
 
         # create a new browser + context
         if self.pw_user_data_dir:
@@ -281,7 +335,11 @@ class BrowserEnv(gym.Env, ABC):
             # No need for manual storage_state save/load.
             user_data_dir = Path(self.pw_user_data_dir)
             user_data_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Launching persistent-context browser: user_data_dir={user_data_dir}")
+            logger.info(
+                "Launching persistent-context browser: user_data_dir=%s  viewport=%s",
+                user_data_dir,
+                viewport,
+            )
 
             self.context = pw.chromium.launch_persistent_context(
                 user_data_dir=str(user_data_dir),
@@ -360,16 +418,21 @@ document.addEventListener("visibilitychange", () => {
 """
         )
 
-        # create the chat
+        # create the chat — placed to the right of the main browser window
         self.chat = Chat(
             headless=self.headless,
-            chat_size=(500, max(viewport["height"], 800)),
+            chat_size=(chat_w, chat_h),
             record_video_dir=self.record_video_dir,
+            window_position=chat_position,
         )
 
         # create a new page
         self.page = self.context.new_page()
         recording_start_time = time.time()
+
+        # Bring the main target-page window to the front so it doesn't
+        # get hidden behind the chat/log window.
+        self.page.bring_to_front()
 
         # setup the task
         task_goal, task_info = self.task.setup(page=self.page)

@@ -17,7 +17,7 @@ agent_a_eval/
 ├── prompts/
 │   ├── driver_agent_prompt.md       # 驱动 Agent 系统 prompt
 │   └── evaluator_agent_prompt.md    # 评审 Agent 系统 prompt
-├── tasks/                       # ★ 任务定义 .md 文件（真人维护）
+├── tasks/                       # ★ 任务定义 .md 文件
 │   ├── data_analysis.md
 │   ├── data_cleaning.md
 │   └── model_training.md

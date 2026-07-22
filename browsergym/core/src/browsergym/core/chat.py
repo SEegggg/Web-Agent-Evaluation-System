@@ -18,14 +18,25 @@ logger = logging.getLogger(__name__)
 
 class Chat:
     def __init__(
-        self, headless: bool, chat_size=(500, 800), record_video_dir=None, modern=True
+        self,
+        headless: bool,
+        chat_size=(500, 800),
+        record_video_dir=None,
+        modern=True,
+        window_position: tuple[int, int] | None = None,
     ) -> None:
         self.messages = []
+
+        # build Chromium args
+        chromium_args = [f"--window-size={chat_size[0]},{chat_size[1]}"]
+        if window_position is not None:
+            chromium_args.append(f"--window-position={window_position[0]},{window_position[1]}")
 
         # create a new browser, browser context and page for the chat
         pw: playwright.sync_api.Playwright = _get_global_playwright()
         self.browser = pw.chromium.launch(
-            headless=headless, args=[f"--window-size={chat_size[0]},{chat_size[1]}"]
+            headless=headless,
+            args=chromium_args,
         )
         self.context = self.browser.new_context(
             no_viewport=True,

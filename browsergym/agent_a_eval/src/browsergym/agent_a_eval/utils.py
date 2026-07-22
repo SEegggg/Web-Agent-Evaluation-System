@@ -36,7 +36,15 @@ class WorkflowConfig:
     max_execution_time_minutes: int = 15  # default, can be overridden per task
     available_datasets: list[str] = field(default_factory=list)
     steps: str = ""  # natural language task steps
-    evaluation_criteria: str = ""  # natural language evaluation criteria
+    evaluation_criteria: str = ""  # legacy: raw evaluation criteria string (backward compat)
+
+    # ── New benchmark-format fields ──
+    task_description: str = ""  # parsed from ## 任务描述
+    core_criteria: str = ""  # parsed from ### 核心指标
+    task_specific_metrics: str = ""  # parsed from ### 任务专项指标
+    process_efficiency_criteria: str = ""  # parsed from ### 过程与效率指标
+    resource_robustness_criteria: str = ""  # parsed from ### 资源与鲁棒性指标
+    is_benchmark_format: bool = False  # True when ### sub-sections detected in 评估标准
 
     @classmethod
     def from_markdown(cls, path: str | Path) -> "WorkflowConfig":
@@ -65,12 +73,59 @@ class WorkflowConfig:
 
             if "可用数据集" in header_lower:
                 config._parse_datasets(body)
+            elif "任务描述" in header_lower:
+                config.task_description = body.strip()
             elif "步骤" in header_lower:
                 config.steps = body.strip()
             elif "评估标准" in header_lower:
                 config.evaluation_criteria = body.strip()
 
+                # Check for benchmark-format sub-sections (### headers with specific keywords)
+                sub_sections = cls._split_h3_sections(body)
+                benchmark_matched = False
+                for sub_header, sub_body in sub_sections.items():
+                    header_lower_h3 = sub_header.lower().strip()
+                    if "核心指标" in header_lower_h3 or "成功率" in header_lower_h3:
+                        config.core_criteria = sub_body.strip()
+                        benchmark_matched = True
+                    elif "过程" in header_lower_h3 or "效率" in header_lower_h3:
+                        config.process_efficiency_criteria = sub_body.strip()
+                        benchmark_matched = True
+                    elif "资源" in header_lower_h3 or "鲁棒" in header_lower_h3:
+                        config.resource_robustness_criteria = sub_body.strip()
+                        benchmark_matched = True
+                    elif "专项" in header_lower_h3 or "任务特定" in header_lower_h3:
+                        config.task_specific_metrics = sub_body.strip()
+                        benchmark_matched = True
+                config.is_benchmark_format = benchmark_matched
+                # If no benchmark keywords matched, is_benchmark_format stays False,
+                # evaluation_criteria is kept as legacy raw string
+
         return config
+
+    @staticmethod
+    def _split_h3_sections(body: str) -> dict[str, str]:
+        """Split a section body into sub-sections by ### headers.
+
+        Mirrors _split_sections() but operates on ### (H3) level.
+        Used to parse benchmark-format evaluation criteria blocks.
+        """
+        sub_sections = {}
+        # Split on "### " at start of line
+        parts = re.split(r"\n(?=###\s)", body)
+
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            header_match = re.match(r"^###\s+(.+)$", part, re.MULTILINE)
+            if header_match:
+                header = header_match.group(1).strip()
+                body_lines = part.split("\n", 1)
+                sub_body = body_lines[1].strip() if len(body_lines) > 1 else ""
+                sub_sections[header] = sub_body
+
+        return sub_sections
 
     @staticmethod
     def _split_sections(content: str) -> dict[str, str]:

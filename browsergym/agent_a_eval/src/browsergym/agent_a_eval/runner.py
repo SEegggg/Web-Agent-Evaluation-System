@@ -44,12 +44,20 @@ class RunResult:
     error_message: Optional[str] = None
     artifacts: Optional[dict] = None
 
+    # ── Benchmark-format fields ──
+    format: str = "legacy"  # "legacy" | "benchmark"
+    core_passed: Optional[bool] = None
+    process_efficiency_scores: dict = field(default_factory=dict)
+    resource_robustness_scores: dict = field(default_factory=dict)
+    task_specific_scores: dict = field(default_factory=dict)
+
 
 @dataclass
 class TaskReport:
     """Aggregated report for a single task across all runs."""
 
     task_name: str
+    format: str = "legacy"  # "legacy" | "benchmark"
     generalization: dict = field(default_factory=dict)  # mean, std, success_rate, scores
     stability: dict = field(default_factory=dict)  # mean, std, stability_score, scores
     runs: list[RunResult] = field(default_factory=list)
@@ -273,16 +281,21 @@ class WorkflowRunner:
             # Log summary
             logger.info(f"Task {task_file.stem} summary:")
             if generalization_runs:
-                logger.info(
-                    f"  Generalization: mean={report.generalization['mean']:.2f}, "
-                    f"std={report.generalization['std']:.2f}, "
-                    f"success_rate={report.generalization['success_rate']:.1%}"
-                )
+                if report.format == "benchmark":
+                    logger.info(
+                        f"  Generalization: pass_rate={report.generalization['pass_rate']:.1%}, "
+                        f"passed={report.generalization.get('passed', 0)}, "
+                        f"failed={report.generalization.get('failed', 0)}"
+                    )
+                else:
+                    logger.info(
+                        f"  Generalization: mean={report.generalization['mean']:.2f}, "
+                        f"std={report.generalization['std']:.2f}, "
+                        f"success_rate={report.generalization['success_rate']:.1%}"
+                    )
             if stability_runs:
                 logger.info(
-                    f"  Stability: mean={report.stability['mean']:.2f}, "
-                    f"std={report.stability['std']:.2f}, "
-                    f"stability_score={report.stability['stability_score']:.2f}"
+                    f"  Stability: stability_score={report.stability['stability_score']:.2f}"
                 )
 
         return all_reports
@@ -382,16 +395,38 @@ class WorkflowRunner:
                 scores = self.evaluator.evaluate(
                     evaluation_criteria=config.evaluation_criteria,
                     artifacts=artifacts,
+                    task_config=config,
                 )
-                overall_score = scores.get("overall_score", 0)
-                dimension_scores = scores.get("dimensions", {})
-                loop_detected = scores.get("loop_detected", False)
+                fmt = scores.get("format", "legacy")
+
+                if fmt == "benchmark":
+                    core = scores.get("core", {})
+                    overall_score = 10.0 if core.get("passed") else 2.0
+                    dimension_scores = {}
+                    loop_detected = False
+                    core_passed = core.get("passed")
+                    process_efficiency_scores = scores.get("process_efficiency", {})
+                    resource_robustness_scores = scores.get("resource_robustness", {})
+                    task_specific_scores = scores.get("task_specific", {})
+                else:
+                    overall_score = scores.get("overall_score", 0)
+                    dimension_scores = scores.get("dimensions", {})
+                    loop_detected = scores.get("loop_detected", False)
+                    core_passed = None
+                    process_efficiency_scores = {}
+                    resource_robustness_scores = {}
+                    task_specific_scores = {}
             else:
                 # No evaluation criteria defined — use hard check only
                 scores = None
+                fmt = "legacy"
                 overall_score = 10.0 if status == "completed" else 0.0
                 dimension_scores = {}
                 loop_detected = (status == "dead_loop")
+                core_passed = None
+                process_efficiency_scores = {}
+                resource_robustness_scores = {}
+                task_specific_scores = {}
 
             # ---- Phase 4: Save debug log ----
             self._save_run_log(
@@ -414,6 +449,11 @@ class WorkflowRunner:
                 loop_detected=loop_detected,
                 elapsed_seconds=elapsed,
                 artifacts=artifacts,
+                format=fmt,
+                core_passed=core_passed,
+                process_efficiency_scores=process_efficiency_scores,
+                resource_robustness_scores=resource_robustness_scores,
+                task_specific_scores=task_specific_scores,
             )
 
         except Exception as e:
@@ -622,19 +662,37 @@ class WorkflowRunner:
         )
 
         # ── 6. Result summary ──
-        result_data = {
-            "task_name": task_name,
-            "dataset_name": dataset_name,
-            "seed": seed,
-            "status": status,
-            "loop_detected": scores.get("loop_detected", False) if scores else False,
-            "overall_score": scores.get("overall_score", 0) if scores else 0,
-            "dimensions": scores.get("dimensions", {}) if scores else {},
-            "overall_comment": scores.get("overall_comment", "") if scores else "",
-            "page_url": artifacts.get("page_url", ""),
-            "page_title": artifacts.get("page_title", ""),
-            "elapsed_time_seconds": artifacts.get("elapsed_time_seconds", 0),
-        }
+        if scores and scores.get("format") == "benchmark":
+            result_data = {
+                "task_name": task_name,
+                "dataset_name": dataset_name,
+                "seed": seed,
+                "status": status,
+                "format": "benchmark",
+                "core": scores.get("core", {}),
+                "process_efficiency": scores.get("process_efficiency", {}),
+                "resource_robustness": scores.get("resource_robustness", {}),
+                "task_specific": scores.get("task_specific", {}),
+                "overall_comment": scores.get("overall_comment", ""),
+                "page_url": artifacts.get("page_url", ""),
+                "page_title": artifacts.get("page_title", ""),
+                "elapsed_time_seconds": artifacts.get("elapsed_time_seconds", 0),
+            }
+        else:
+            result_data = {
+                "task_name": task_name,
+                "dataset_name": dataset_name,
+                "seed": seed,
+                "status": status,
+                "format": "legacy",
+                "loop_detected": scores.get("loop_detected", False) if scores else False,
+                "overall_score": scores.get("overall_score", 0) if scores else 0,
+                "dimensions": scores.get("dimensions", {}) if scores else {},
+                "overall_comment": scores.get("overall_comment", "") if scores else "",
+                "page_url": artifacts.get("page_url", ""),
+                "page_title": artifacts.get("page_title", ""),
+                "elapsed_time_seconds": artifacts.get("elapsed_time_seconds", 0),
+            }
         (log_dir / "result.json").write_text(
             json.dumps(result_data, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -652,9 +710,22 @@ class WorkflowRunner:
         """Build aggregated TaskReport from individual runs."""
 
         def _compute_stats(runs: list[RunResult]) -> dict:
+            if runs and all(r.format == "benchmark" for r in runs):
+                # Benchmark format: compute pass rate
+                passed = sum(1 for r in runs if r.core_passed)
+                return {
+                    "format": "benchmark",
+                    "pass_rate": passed / len(runs) if runs else 0,
+                    "total_runs": len(runs),
+                    "passed": passed,
+                    "failed": len(runs) - passed,
+                    "statuses": [r.status for r in runs],
+                }
+            # Legacy format: compute mean/std of scores
             scores = [r.overall_score for r in runs]
             success_count = sum(1 for r in runs if r.status == "completed")
             return {
+                "format": "legacy",
                 "scores": scores,
                 "mean": float(np.mean(scores)) if scores else 0.0,
                 "std": float(np.std(scores)) if scores else 0.0,
@@ -667,14 +738,23 @@ class WorkflowRunner:
         stab_stats = _compute_stats(stability_runs)
 
         # Stability score: 1 - normalized std (higher is better)
-        if stab_stats["std"] > 0:
+        # For benchmark format, use pass_rate consistency instead
+        if stab_stats.get("format") == "benchmark":
+            stab_stats["stability_score"] = stab_stats.get("pass_rate", 0)
+        elif stab_stats.get("std", 0) > 0:
             # Normalize: std of 0 → score 1.0, std of 5 → score 0.0
             stab_stats["stability_score"] = max(0.0, 1.0 - stab_stats["std"] / 5.0)
         else:
             stab_stats["stability_score"] = 1.0
 
+        # Determine overall format
+        report_format = "benchmark" if (
+            generalization_runs and all(r.format == "benchmark" for r in generalization_runs)
+        ) else "legacy"
+
         return TaskReport(
             task_name=task_name,
+            format=report_format,
             generalization=gen_stats,
             stability=stab_stats,
             runs=generalization_runs + stability_runs,
@@ -711,27 +791,46 @@ class WorkflowRunner:
         json_path = output_dir / f"evaluation_summary_{timestamp}.json"
         json_data = []
         for report in reports:
+            json_runs = []
+            for r in report.runs:
+                run_entry = {
+                    "dataset": r.dataset_name,
+                    "seed": r.seed,
+                    "status": r.status,
+                    "elapsed_seconds": r.elapsed_seconds,
+                    "error": r.error_message,
+                    "format": r.format,
+                }
+                if r.format == "benchmark":
+                    run_entry["core_passed"] = r.core_passed
+                    run_entry["process_efficiency"] = {
+                        k: v.get("score", v) if isinstance(v, dict) else v
+                        for k, v in r.process_efficiency_scores.items()
+                    }
+                    run_entry["resource_robustness"] = {
+                        k: v.get("score", v) if isinstance(v, dict) else v
+                        for k, v in r.resource_robustness_scores.items()
+                    }
+                    run_entry["task_specific"] = {
+                        k: v.get("score", v) if isinstance(v, dict) else v
+                        for k, v in r.task_specific_scores.items()
+                    }
+                else:
+                    run_entry["overall_score"] = r.overall_score
+                    run_entry["dimension_scores"] = {
+                        k: v.get("score", v) if isinstance(v, dict) else v
+                        for k, v in r.dimension_scores.items()
+                    }
+                    run_entry["loop_detected"] = r.loop_detected
+                json_runs.append(run_entry)
+
             json_data.append(
                 {
                     "task_name": report.task_name,
+                    "format": report.format,
                     "generalization": report.generalization,
                     "stability": report.stability,
-                    "runs": [
-                        {
-                            "dataset": r.dataset_name,
-                            "seed": r.seed,
-                            "status": r.status,
-                            "overall_score": r.overall_score,
-                            "dimension_scores": {
-                                k: v.get("score", v) if isinstance(v, dict) else v
-                                for k, v in r.dimension_scores.items()
-                            },
-                            "loop_detected": r.loop_detected,
-                            "elapsed_seconds": r.elapsed_seconds,
-                            "error": r.error_message,
-                        }
-                        for r in report.runs
-                    ],
+                    "runs": json_runs,
                 }
             )
         with open(json_path, "w", encoding="utf-8") as f:
@@ -749,17 +848,20 @@ class WorkflowRunner:
                     "dataset",
                     "seed",
                     "status",
+                    "format",
                     "overall_score",
+                    "core_passed",
                     "loop_detected",
                     "elapsed_seconds",
                     "error",
                 ]
             )
             for report in reports:
+                gen_count = report.generalization.get("num_runs", len(report.generalization.get("scores", [])))
                 for i, r in enumerate(report.runs):
                     run_type = (
                         "generalization"
-                        if i < len(report.generalization.get("scores", []))
+                        if i < gen_count
                         else "stability"
                     )
                     writer.writerow(
@@ -769,7 +871,9 @@ class WorkflowRunner:
                             r.dataset_name,
                             r.seed,
                             r.status,
+                            r.format,
                             f"{r.overall_score:.2f}",
+                            "PASS" if r.core_passed else ("FAIL" if r.core_passed is False else ""),
                             r.loop_detected,
                             f"{r.elapsed_seconds:.1f}",
                             r.error_message or "",
@@ -833,12 +937,19 @@ class WorkflowRunner:
             lines.append("    (未执行)")
             return lines
 
-        # 汇总
-        mean_val = stats.get("mean", 0)
-        std_val = stats.get("std", 0)
-        success_rate = stats.get("success_rate", 0)
+        is_benchmark = stats.get("format") == "benchmark"
 
-        lines.append(f"    平均分: {mean_val:.1f}/10  |  标准差: {std_val:.2f}  |  成功率: {success_rate:.0%}")
+        # 汇总
+        if is_benchmark:
+            pass_rate = stats.get("pass_rate", 0)
+            passed = stats.get("passed", 0)
+            failed = stats.get("failed", 0)
+            lines.append(f"    通过率: {pass_rate:.0%}  |  通过: {passed}  |  失败: {failed}")
+        else:
+            mean_val = stats.get("mean", 0)
+            std_val = stats.get("std", 0)
+            success_rate = stats.get("success_rate", 0)
+            lines.append(f"    平均分: {mean_val:.1f}/10  |  标准差: {std_val:.2f}  |  成功率: {success_rate:.0%}")
 
         # 稳定性额外指标
         if "stability_score" in stats:
@@ -851,22 +962,60 @@ class WorkflowRunner:
 
             if r.status == "completed":
                 lines.append(f"        状态: {status_label}")
-                lines.append(f"        综合得分: {r.overall_score:.1f}/10")
-                if r.loop_detected:
-                    lines.append(f"        ⚠️ 检测到死循环")
 
-                # 各维度评分
-                if r.dimension_scores:
-                    lines.append(f"        各维度评分:")
-                    for dim_name, dim_data in r.dimension_scores.items():
-                        if isinstance(dim_data, dict):
-                            score = dim_data.get("score", "?")
-                            reason = dim_data.get("justification", "")
-                            lines.append(f"          - {dim_name}: {score}/10")
-                            if reason:
-                                lines.append(f"            理由: {reason}")
-                        else:
-                            lines.append(f"          - {dim_name}: {dim_data}/10")
+                if r.format == "benchmark":
+                    # Benchmark format: show core pass/fail + sub-dimensions
+                    core_label = "✅ PASS" if r.core_passed else "❌ FAIL"
+                    lines.append(f"        核心判定: {core_label}")
+
+                    # Process efficiency
+                    if r.process_efficiency_scores:
+                        lines.append(f"        过程与效率指标:")
+                        for dim_name, dim_data in r.process_efficiency_scores.items():
+                            if isinstance(dim_data, dict):
+                                score = dim_data.get("score", "?")
+                                reason = dim_data.get("justification", "")
+                                lines.append(f"          - {dim_name}: {score}/10")
+                                if reason:
+                                    lines.append(f"            理由: {reason}")
+
+                    # Resource robustness
+                    if r.resource_robustness_scores:
+                        lines.append(f"        资源与鲁棒性指标:")
+                        for dim_name, dim_data in r.resource_robustness_scores.items():
+                            if isinstance(dim_data, dict):
+                                score = dim_data.get("score", "?")
+                                reason = dim_data.get("justification", "")
+                                lines.append(f"          - {dim_name}: {score}/10")
+                                if reason:
+                                    lines.append(f"            理由: {reason}")
+
+                    # Task specific
+                    if r.task_specific_scores:
+                        lines.append(f"        任务专项指标:")
+                        for dim_name, dim_data in r.task_specific_scores.items():
+                            if isinstance(dim_data, dict):
+                                score = dim_data.get("score", "?")
+                                reason = dim_data.get("justification", "")
+                                lines.append(f"          - {dim_name}: {score}/10")
+                                if reason:
+                                    lines.append(f"            理由: {reason}")
+                else:
+                    # Legacy format
+                    lines.append(f"        综合得分: {r.overall_score:.1f}/10")
+                    if r.loop_detected:
+                        lines.append(f"        ⚠️ 检测到死循环")
+                    if r.dimension_scores:
+                        lines.append(f"        各维度评分:")
+                        for dim_name, dim_data in r.dimension_scores.items():
+                            if isinstance(dim_data, dict):
+                                score = dim_data.get("score", "?")
+                                reason = dim_data.get("justification", "")
+                                lines.append(f"          - {dim_name}: {score}/10")
+                                if reason:
+                                    lines.append(f"            理由: {reason}")
+                            else:
+                                lines.append(f"          - {dim_name}: {dim_data}/10")
 
             else:
                 # 失败：显示状态和原因
