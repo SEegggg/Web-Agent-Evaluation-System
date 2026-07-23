@@ -2,6 +2,8 @@
 
 基于 [BrowserGym](https://github.com/ServiceNow/BrowserGym) 构建的网页端数据科学 Agent 能力评审系统。
 
+支持 **串行** 和 **joblib 多进程并行** 两种执行模式，一键并行评测全部任务。
+
 ## 目录结构
 
 ```
@@ -9,27 +11,36 @@ agent_a_eval/
 ├── config.yaml                  # ★ 统一配置文件（LLM、浏览器、路径）
 ├── .env.example                 # 环境变量模板
 ├── scripts/
-│   ├── run_eval.py              # ★ 测试入口脚本
-│   └── task_generator.py        # 任务生成工具
+│   ├── run_eval.py              # 串行评测入口
+│   ├── run_agentlab.py          # ★ 并行评测入口（AgentLab + joblib）
+│   ├── task_generator.py        # ★ LLM 驱动的任务 .md 生成器
+│   └── _agentlab_stubs/         # agentlab 兼容性桩（webarena/visualwebarena）
 ├── README.md
 ├── pyproject.toml
 ├── requirements.txt
 ├── prompts/
-│   ├── driver_agent_prompt.md       # 驱动 Agent 系统 prompt
+│   ├── driver_agent_prompt.md       # 驱动 Agent 系统 prompt（含 Skill 使用指南）
 │   └── evaluator_agent_prompt.md    # 评审 Agent 系统 prompt
-├── tasks/                       # ★ 任务定义 .md 文件（真人维护）
+├── tasks/                       # ★ 任务定义 .md 文件
 │   ├── data_analysis.md
 │   ├── data_cleaning.md
-│   └── model_training.md
+│   ├── model_training.md
+│   └── 数据注册.md               # LLM 生成的示例任务
 ├── test_data/datasets/          # ★ 测试数据集
-│   ├── sales_2024.csv
-│   ├── customers.csv
-│   └── iris.csv
+│   ├── sales_2024.csv           # 干净销售数据（25行）
+│   ├── customers.csv            # 干净客户数据
+│   ├── iris.csv                 # 干净鸢尾花数据
+│   ├── dirty_sales.csv          # 脏销售数据（含缺失值/重复行/异常值）
+│   ├── messy_customers.csv      # 混乱客户数据（含日期格式不一致/拼写错误）
+│   └── raw_iris.csv             # 原始鸢尾花数据（含缺失值/极端异常值）
 └── src/browsergym/agent_a_eval/ # 核心源码
-    ├── __init__.py              # 自动注册任务
-    ├── task.py                  # WorkflowTask（BrowserGym 任务核心）
+    ├── __init__.py              # 自动注册任务 + get_benchmark()
+    ├── task.py                  # WorkflowTask（BrowserGym 任务核心 + Skill API）
     ├── evaluator.py             # EvaluatorAgent（独立 LLM 评审）
-    ├── runner.py                # WorkflowRunner（批量+泛化性+稳定性）
+    ├── runner.py                # WorkflowRunner（串行批量+泛化性+稳定性）
+    ├── agentlab_runner.py       # AgentLabRunner（并行批量+泛化性+稳定性）
+    ├── benchmark.py             # AgentLab Benchmark 适配层
+    ├── network_interceptor.py   # 网络拦截器（SSE + JSON 捕获）
     └── utils.py                 # WorkflowConfig / LoopDetector / PageStateChecker
 ```
 
@@ -53,7 +64,7 @@ conda activate agent-a-eval
 pip install -e ./browsergym/core
 pip install -e ./browsergym/experiments
 
-# agent_a_eval 模块
+# agent_a_eval 模块（含 agentlab + joblib）
 pip install -e ./browsergym/agent_a_eval
 
 # demo_agent 依赖（驱动 Agent 使用的 DemoAgent）
@@ -63,11 +74,8 @@ pip install -r ./demo_agent/requirements.txt
 playwright install chromium
 ```
 
-> **说明**：
-> - `-e` = editable 可编辑安装，改源码后立即生效无需重装
-> - 必须装 `browsergym/core` 和 `browsergym/experiments`，agent_a_eval 依赖它们
-> - Playwright 的 Chromium 是定制版浏览器，与你本机的 Chrome 相互独立
-> - 如果 `pip install -e ./browsergym/agent_a_eval` 报 `README.md does not exist`，先 `echo "" > browsergym/agent_a_eval/README.md`
+> **注意**：`agentlab` 依赖 `ray[default]`，Windows 下 ray 可能无法安装。`
+> run_agentlab.py` 默认使用 joblib 后端，不依赖 ray。
 
 ### 3. 验证安装
 
@@ -76,31 +84,20 @@ cd browsergym/agent_a_eval
 python -c "import browsergym.agent_a_eval; print('OK:', len(browsergym.agent_a_eval.ALL_TASK_IDS), 'tasks registered')"
 ```
 
-预期输出：
-```
-OK: 9 tasks registered
-```
-
 ---
 
 ## 二、配置说明
 
 ### 🔐 敏感信息管理（.env）
 
-API Key、登录密码等敏感信息**不要**写在 [config.yaml](config.yaml) 中，而应通过 `.env` 文件管理：
+API Key、登录密码等敏感信息通过 `.env` 文件管理：
 
 ```bash
-# 1. 复制模板
 cp .env.example .env
-
-# 2. 编辑 .env，填入真实密钥
-# .env 已加入 .gitignore，不会被提交到 Git
+# 编辑 .env，填入真实密钥
 ```
 
-**配置优先级**（高 → 低）：
-1. 系统环境变量（`export` / `set` 设置的）
-2. 同目录下的 `.env` 文件
-3. `config.yaml` 中的值
+**配置优先级**（高 → 低）：系统环境变量 > `.env` 文件 > `config.yaml`
 
 ### 环境变量对照表
 
@@ -113,86 +110,32 @@ cp .env.example .env
 | 登录 URL | `AGENT_A_EVAL_LOGIN_URL` | Agent A 的登录页面地址 |
 | 登录用户名 | `AGENT_A_EVAL_LOGIN_USERNAME` | Agent A 登录用户名 |
 | 登录密码 | `AGENT_A_EVAL_LOGIN_PASSWORD` | Agent A 登录密码 |
-
-### config.yaml 结构
-
-所有配置集中在 [config.yaml](config.yaml) 中，分为 6 个部分：
-
-### driver_agent — 驱动 Agent LLM
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `provider` | `openai` 或 `anthropic` | `openai` |
-| `model` | 模型名称 | `gpt-4o` |
-| `api_key` | API key，`null` 时从环境变量读取 | `null` |
-| `base_url` | API 地址，`null` 使用默认 | `null` |
-| `temperature` | 生成温度 (0-2) | `0.1` |
-| `max_tokens` | 最大输出 token | `4096` |
-| `chat_mode` | 对话模式 | `false` |
-| `demo_mode` | 视觉特效 (`"default"` / `"off"`) | `"off"` |
-
-> **注意**：DemoAgent 当前硬编码了 `openai.OpenAI()`，只支持 OpenAI 兼容接口。如果用 DeepSeek 等其他厂商，需使用 OpenAI 兼容端点（如 `base_url: https://api.deepseek.com/v1`）。
-
-### evaluator — 评审 Agent LLM
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `provider` | 同上 | `openai` |
-| `model` | 建议使用强模型保证评分质量 | `gpt-4o` |
-| `api_key` | 同上 | `null` |
-| `base_url` | 同上 | `null` |
-| `temperature` | 低温度保证评分一致性 | `0.1` |
-| `max_tokens` | | `2000` |
-
-### login — 登录配置
-
-Agent A 访问前需要登录时填写。配置后所有任务的 setup 阶段会自动插入登录步骤。
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `url` | 登录页面 URL，为空则跳过登录 | `""` |
-| `username` | 登录用户名 | `""` |
-| `password` | 登录密码 | `""` |
-
-> **说明**：
-> - 如果登录表单在 Agent A 主页面上，`url` 填 Agent A 的地址
-> - 如果登录是独立的页面，`url` 填登录页地址，登录成功后再跳转到 Agent A
-> - 用户名和密码都为空时，自动跳过登录步骤
-
-### browser — 浏览器配置
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `headless` | `true` = 后台运行，`false` = 显示窗口 | `true` |
-| `viewport_width` | 窗口宽度 | `1280` |
-| `viewport_height` | 窗口高度 | `900` |
-| `slow_mo` | 操作间隔 ms | `500` |
-| `timeout` | 单次操作超时 ms | `10000` |
-
-### paths — 路径配置
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `tasks_dir` | .md 任务文件目录 | `tasks` |
-| `datasets_dir` | 测试数据集目录 | `test_data/datasets` |
-| `exp_root` | 实验结果输出目录 | `./results` |
-| `reports_dir` | 评分报告输出目录 | `./reports` |
-
-相对路径均相对于 config.yaml 所在目录解析。
-
-### evaluation — 评测设置
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `tasks` | 要跑的任务列表，`[]` = 全部 | `[]` |
-| `generalization_datasets` | 泛化性测试用几个数据集 | `3` |
-| `stability_seeds` | 稳定性测试的种子 | `[42, 123, 456]` |
-| `max_steps` | 每实验最大步数 | `200` |
-| `task_datasets` | 按任务覆盖数据集（可选） | `{}` |
+| Skill API | `AGENT_A_API_BASE_URL` | Agent A 后端 API 地址（Skill 查询） |
+| Skill API Token | `AGENT_A_API_TOKEN` | Skill API 认证 Token |
 
 ---
 
 ## 三、运行测试
+
+### 并行评测（推荐）
+
+```bash
+cd browsergym/agent_a_eval
+
+# 默认并行（joblib，4 workers）
+python scripts/run_agentlab.py
+
+# 指定 worker 数量
+python scripts/run_agentlab.py --n-jobs 8
+
+# 仅评测单个任务
+python scripts/run_agentlab.py --task data_analysis
+
+# 串行模式（等同于 run_eval.py）
+python scripts/run_agentlab.py --n-jobs 1 --backend sequential
+```
+
+### 串行评测（传统模式）
 
 ```bash
 cd browsergym/agent_a_eval
@@ -202,16 +145,13 @@ python scripts/run_eval.py
 ### 常用命令
 
 ```bash
-# 查看所有参数
-python scripts/run_eval.py --help
-
 # 只运行指定任务
 python scripts/run_eval.py --task data_analysis
 
-# 跳过稳定性测试（只跑泛化性）
+# 跳过稳定性测试
 python scripts/run_eval.py --skip-stability
 
-# 跳过泛化性测试（只跑稳定性）
+# 跳过泛化性测试
 python scripts/run_eval.py --skip-generalization
 
 # 显示浏览器窗口（调试用）
@@ -219,58 +159,75 @@ python scripts/run_eval.py --no-headless -v
 
 # 指定数据集目录
 python scripts/run_eval.py --datasets-dir D:\my_data\eval_datasets
-
-# 用自定义配置文件
-python scripts/run_eval.py --config my_config.yaml
 ```
 
-### 快速配置（编辑 scripts/run_eval.py 顶部 ★ 区域）
+### 快速配置
+
+编辑 `scripts/run_agentlab.py` 顶部 `★ EDIT HERE` 区域：
 
 ```python
-TASKS = ["data_analysis"]      # 只跑 data_analysis
-SEEDS = [42, 123, 456, 789]    # 稳定性测试用 4 个种子
-GENERALIZATION_DATASETS = 5    # 泛化性测试 5 个数据集
-DATASETS_DIR = r"D:\work\data" # 数据集路径
-SKIP_STABILITY = True          # 跳过稳定性测试
-HEADLESS = False               # 显示浏览器窗口
+TASKS = ["data_analysis"]          # 只跑指定任务
+SKIP_STABILITY = True              # 跳过稳定性测试
+SKIP_GENERALIZATION = True         # 跳过泛化性测试
+HEADLESS = False                   # 显示浏览器窗口
 ```
 
-配置优先级：**命令行参数 > run_eval.py ★ 区域 > config.yaml**
+配置优先级：**命令行参数 > run_agentlab.py ★ 区域 > config.yaml**
 
 ---
 
 ## 四、添加新任务
 
-1. 在 `tasks/` 目录下新建 `.md` 文件，参考 [data_analysis.md](tasks/data_analysis.md) 的格式：
+### 方式一：手写 .md
+
+1. 在 `tasks/` 目录下新建 `.md` 文件，参考现有任务格式：
 
 ```markdown
 # 任务标题
-
-## 基本信息
-- Agent A 地址: http://localhost:8080/workspace
-- 最大执行时间: 10 分钟
-- 最大操作步数: 200
-- 需要登录: 是（登录凭据在 config.yaml 中配置，执行时自动处理）
 
 ## 可用数据集
 - dataset1.csv: 描述
 - dataset2.csv: 描述
 
-## 页面硬校验规则
-1. 存在 .report-content 元素
-2. 不存在 .loading 元素
-
 ## 步骤
-1. ...
+1. 具体可操作步骤
+2. ...
 
 ## 评估标准
-### 维度1 (权重 ...)
-...
+
+### 核心指标: 任务成功率（一票通过/否决）
+- 通过条件: ...
+- 失败条件: ...
+- 归因说明: ...
+
+### 任务专项指标
+- 具体评分维度及标准
 ```
 
 2. 将数据集文件放入 `test_data/datasets/`
 
-3. 无需修改代码，再次运行 `run_eval.py` 会自动发现新任务
+3. 无需修改代码，再次运行会自动发现新任务
+
+### 方式二：LLM 生成
+
+```bash
+# 命令行模式
+python scripts/task_generator.py \
+  -d custom \
+  -n "任务名称" \
+  --datasets "file1.csv:描述,file2.csv:描述" \
+  -r "额外的特殊要求"
+
+# 交互模式
+python scripts/task_generator.py --interactive
+```
+
+生成器会：
+1. 从 `.env` 和 `config.yaml` 读取 LLM 配置
+2. 调用 LLM 生成符合规范的 .md 文件
+3. 自动校验格式（必需章节、数据集格式、编号步骤等）
+4. 校验失败自动让 LLM 修复（最多 2 次重试）
+5. 保存前验证 `WorkflowConfig` 可正常解析
 
 ---
 
@@ -278,24 +235,44 @@ HEADLESS = False               # 显示浏览器窗口
 
 评测结束后，报告保存在 `reports/` 目录：
 
-- `evaluation_report_YYYYMMDD_HHMMSS.txt` — **★ 中文文字报告**（可直接阅读，含各维度评分和失败原因）
-- `evaluation_summary_YYYYMMDD_HHMMSS.json` — 结构化 JSON 数据
-- `evaluation_runs_YYYYMMDD_HHMMSS.csv` — 每次运行摘要表格
+- `evaluation_report_YYYYMMDD_HHMMSS.txt` — **中文文字报告**
+- `evaluation_summary_YYYYMMDD_HHMMSS.json` — 结构化 JSON
+- `evaluation_runs_YYYYMMDD_HHMMSS.csv` — 每次运行摘要
+
+AgentLab 模式还会在 `results/` 下生成 AgentXRay 兼容的实验目录。
 
 ---
 
 ## 六、架构说明
 
 ```
-Driver Agent (BrowserGym 内)          Evaluator Agent (独立)
-├─ 读取 tasks/*.md                    ├─ 读取 artifacts
-├─ 操作浏览器                          ├─ 调用 LLM 评分
-├─ 发送 WORKFLOW_DONE 信号            └─ 输出结构化 JSON
-└─ 硬校验通过 → 收集 artifacts
+┌─ 浏览器阶段（并行）────────────────────────────────────┐
+│  Driver Agent (BrowserGym + AgentLab)                  │
+│  ├─ 读取 tasks/*.md → 构建 goal                        │
+│  ├─ 通过 Skill API 获取 Agent A 可用 Skill 列表         │
+│  ├─ 操作浏览器执行任务步骤                              │
+│  ├─ NetworkInterceptor 捕获 Agent A SSE/JSON 响应       │
+│  ├─ 死循环检测 / 硬校验 / 超时控制                      │
+│  └─ 收集 artifacts → 写入日志目录                       │
+├────────────────────────────────────────────────────────┤
+│  评审阶段（串行）                                       │
+│  Evaluator Agent (独立 LLM)                            │
+│  ├─ 读取 artifacts (agent_a_output.txt, chat_history)   │
+│  ├─ 根据任务 .md 中的评估标准评分                        │
+│  └─ 输出 TaskReport (pass/fail + 各维度评分 + 理由)     │
+└────────────────────────────────────────────────────────┘
 
-WorkflowRunner
+AgentLabRunner
+├─ 快速测试: 固定 seed=42, 单数据集
 ├─ 泛化性测试: 固定 seed=42, 变数据集
 └─ 稳定性测试: 固定数据集, 变 seed
 ```
 
 **驱动 Agent 和评审 Agent 完全分离** — 不同 session，不同 LLM，不同职责。
+
+### 关键设计
+
+- **NetworkInterceptor**：在 Playwright 网络层拦截 Agent A 后端 API 响应（SSE 流 + JSON），比 DOM 抓取更可靠
+- **Skill API**：每次任务 setup 时从 Agent A 后端获取可用 Skill 列表，注入到 Driver Agent 的 goal 中
+- **程序化登录**：先尝试从 `storage_state` 恢复登录态，失败则自动填写登录表单
+- **死循环检测**：多信号（动作重复 + DOM 状态回退）防止 Driver Agent 卡死

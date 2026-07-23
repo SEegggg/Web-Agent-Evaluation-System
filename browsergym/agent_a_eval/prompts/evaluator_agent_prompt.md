@@ -55,6 +55,8 @@
 
 3. 具体通过/失败条件由每个任务的 user prompt 提供，请严格按照其中列出的条件进行判定。
 
+4. **Skill 使用评估**：如果驱动 Agent 在指令中指定了应使用的 Skill，但 Agent A 未使用该 Skill 或使用了错误的 Skill，这属于 Agent A 的问题，应在核心指标的 justification 中注明。
+
 ### 二、过程与效率指标（0-10 评分，辅助参考，不影响核心判定）
 
 评估 **Agent A** 的工作过程质量。以下维度对所有任务固定不变：
@@ -96,7 +98,7 @@
   "process_efficiency": {
     "instruction_comprehension": {"score": 8, "justification": "Agent A 是否正确理解了用户指令"},
     "task_execution_efficiency": {"score": 7, "justification": "Agent A 的内部步骤是否合理高效"},
-    "output_redundancy": {"score": 6, "justification": "Agent A 的输出是否存在重复冗余"}
+    "output_redundancy": {"score": 6, "justification": "Agent A 的输出是否存在重复冗余，若artifact和最终文本属于正常现象，Agent A要把内容传入给artifact才能生成可视化报告"}
   },
   "resource_robustness": {
     "computation_cost": {"score": 7, "justification": "Agent A 的计算资源消耗是否合理"},

@@ -1,3 +1,9 @@
 pyyaml>=6.0
 openai>=1.0.0
 numpy>=1.24.0
+joblib>=1.3.0
+# AgentLab — parallel experiment orchestration + AgentXRay visualization
+# Note: agentlab depends on ray[default] which may not install on Windows.
+# Use parallel_backend="joblib" or "sequential" on Windows.
+# On Linux/Mac, install ray manually: pip install ray[default]
+agentlab>=0.4.0

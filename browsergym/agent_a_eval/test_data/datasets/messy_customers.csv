@@ -1,0 +1,27 @@
+id,name,age,city,total_purchases,registration_date
+1001,Alice Johnson,34,New Yrok,15,2023/03/15
+1002,Bob Smith,45,Los Angeles,22,03-16-2023
+1003,Carol Williams,28,Chicagoo,8,2023-03-17
+1004,David Brown,52,Houston,31,2023.03.18
+1005,Eva Martinez,41,Phoenix,18,2023/03/19
+1006,Frank Lee,37,San Antono,12,2023-03-20
+1007,Grace Kim,29,San Diego,25,2023/03/21
+1008,Henry Davis,48,Dalas,42,2023-03-22
+1009,Ivy Chen,33,San Jose,19,03/23/2023
+1010,Jack Wilson,55,Austinn,38,2023-03-24
+1011,Karen Taylor,26,Jacksonville,7,2023.03.25
+1012,Leo Anderson,44,Fort Worth,28,2023/03/26
+1013,Mia Thomas,39,Columbus,16,2023-03-27
+1014,Noah Garcia,31,Charlotte,21,14-03-2023
+1015,Olivia Robinson,50,Indianapolis,33,2023/03/29
+1016,Peter White,36,Seattle,14,2023-03-30
+1017,Quinn Harris,42,Denver,24,03/31/2023
+1018,Rose Martin,27,Bostn,10,2023-04-01
+1019,Sam Thompson,53,Nashvill,36,2023.04.02
+1020,Tina Moore,46,Portland,27,2023/04/03
+1003,Carol Williams,28,Chicagoo,8,2023-03-17
+1008,Henry Davis,48,Dalas,42,2023-03-22
+1016,Peter White,36,Seattle,14,2023-03-30
+1021,Liam Walker,,San Francisco,5,2023/04/04
+1022,Sophia Adams,29,,11,2023-04-05
+1023,James Lee,41,Atlanta,,2023/04/06

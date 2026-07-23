@@ -10,9 +10,11 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
+from urllib.parse import urlparse
 
 import playwright.sync_api
+import requests
 
 from browsergym.core.task import AbstractBrowserTask
 
@@ -83,6 +85,109 @@ class WorkflowTask(AbstractBrowserTask):
         except Exception:
             pass
         return ""
+
+    # =========================================================================
+    # Skill API — fetch Agent A's available skills for Driver Agent context
+    # =========================================================================
+
+    @staticmethod
+    def _get_api_config() -> tuple[str, Optional[str]]:
+        """
+        Resolve Agent A backend API configuration from environment variables.
+
+        Returns:
+            (base_url, auth_token) tuple. base_url may be empty if unresolvable.
+            auth_token is None if not configured.
+        """
+        # 1. API base URL — prefer explicit, fall back to deriving from login URL
+        base_url = os.environ.get("AGENT_A_API_BASE_URL", "").strip().rstrip("/")
+        if not base_url:
+            login_url = os.environ.get(
+                "AGENT_A_EVAL_LOGIN_URL", "http://180.76.145.245:8080/chat"
+            )
+            try:
+                parsed = urlparse(login_url)
+                base_url = f"{parsed.scheme}://{parsed.hostname}:8000"
+            except Exception:
+                base_url = ""
+
+        # 2. Auth token
+        token = os.environ.get("AGENT_A_API_TOKEN", "").strip() or None
+
+        return base_url, token
+
+    @classmethod
+    def _fetch_skills(cls, base_url: str, token: Optional[str]) -> list[dict]:
+        """
+        Fetch the list of available Skills from Agent A's backend API.
+
+        Args:
+            base_url: Agent A backend API base URL (e.g. http://host:8000)
+            token: optional Bearer token for authentication
+
+        Returns:
+            List of skill dicts (each has at least 'name' key), or empty list on failure.
+        """
+        if not base_url:
+            logger.info("Skill API base URL not configured — skipping skill fetch")
+            return []
+
+        url = f"{base_url}/api/skills"
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        try:
+            logger.info(f"Fetching skills from {url}...")
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            skills = resp.json()
+            if isinstance(skills, list):
+                logger.info(f"Fetched {len(skills)} skill(s) from Agent A")
+                return skills
+            else:
+                logger.warning(f"Unexpected skills response type: {type(skills)}")
+                return []
+        except requests.exceptions.Timeout:
+            logger.warning(f"Skill API timeout ({url}) — skipping skill injection")
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"Skill API unreachable ({url}) — skipping skill injection")
+        except Exception as e:
+            logger.warning(f"Failed to fetch skills from {url}: {e}")
+
+        return []
+
+    @staticmethod
+    def _format_skills_for_goal(skills: list[dict]) -> str:
+        """
+        Format a list of skill dicts into a goal section for the Driver Agent.
+
+        Each skill dict may have: name, description, content (markdown), etc.
+        We extract name + description for the goal (keep it concise).
+        """
+        if not skills:
+            return ""
+
+        lines = [
+            "### Agent A 可用的 Skill",
+            "",
+            "Agent A 支持通过 Skill 切换专业工作模式。以下 Skill 当前可用：",
+            "",
+        ]
+        for s in skills:
+            name = s.get("name", "未知")
+            desc = s.get("description", "") or s.get("summary", "")
+            if desc:
+                lines.append(f"- **{name}**: {desc}")
+            else:
+                lines.append(f"- **{name}**")
+        lines.append("")
+        lines.append(
+            "在向 Agent A 发送任务指令时，如果任务与某个 Skill 匹配，"
+            "请在消息中明确指定使用该 Skill（例如：\"请使用**数据探索** Skill 分析 iris.csv\"）。"
+        )
+        lines.append("")
+        return "\n".join(lines)
 
     def __init__(
         self,
@@ -220,6 +325,11 @@ class WorkflowTask(AbstractBrowserTask):
             dataset_list_lines.append(f"- {d}(路径: {full_p})")
         dataset_list = "\n".join(dataset_list_lines) if dataset_list_lines else "(无)"
 
+        # ── Fetch Agent A's available skills ──
+        base_url, token = self._get_api_config()
+        skills = self._fetch_skills(base_url, token)
+        skill_section = self._format_skills_for_goal(skills)
+
         # ── Load driver technical operations manual ──
         driver_prompt = self._load_driver_prompt()
 
@@ -238,7 +348,7 @@ class WorkflowTask(AbstractBrowserTask):
 ### 所有可用数据集(含完整文件路径)
 {dataset_list}
 
-{login_section}{new_session_section}### 执行步骤
+{login_section}{new_session_section}{skill_section}### 执行步骤
 {self.config.steps}
 
 ---

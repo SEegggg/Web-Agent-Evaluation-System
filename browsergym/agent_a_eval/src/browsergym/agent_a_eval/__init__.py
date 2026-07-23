@@ -87,3 +87,18 @@ def _register_workflows():
 
 # Auto-register on import
 _register_workflows()
+
+
+def get_benchmark(task_filter=None):
+    """
+    Convenience function: return an AgentLab-compatible Benchmark.
+
+    Args:
+        task_filter: optional list of task names (stems).
+
+    Returns:
+        bgym.Benchmark ready for agentlab.experiments.study.make_study().
+    """
+    from .benchmark import create_workflow_benchmark
+
+    return create_workflow_benchmark(task_filter=task_filter)

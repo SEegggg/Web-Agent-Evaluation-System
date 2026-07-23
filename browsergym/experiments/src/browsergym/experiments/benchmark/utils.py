@@ -262,6 +262,9 @@ def prepare_backend(backend: str):
             weblinx_browsergym.download_and_unzip_demos(demo_ids=demo_ids, cache_dir=cache_dir)
         case "timewarp":
             import browsergym.timewarp
+        case "agent_a_eval":
+            # No server/instance to spin up — just trigger task registration
+            import browsergym.agent_a_eval
         case _:
             raise NotImplementedError(f"Unknown benchmark backend {repr(backend)}")
 

@@ -336,6 +336,9 @@ class DemoAgentArgs(AbstractAgentArgs):
 
     By isolating them in a dataclass, this ensures serialization without storing
     internal states of the agent.
+
+    Compatible with both browsergym.experiments.AbstractAgentArgs and
+    AgentLab's agentlab.agents.agent_args.AgentArgs (bgym.AbstractAgentArgs).
     """
 
     model_name: str = "gpt-4o-mini"
@@ -344,6 +347,35 @@ class DemoAgentArgs(AbstractAgentArgs):
     use_html: bool = False
     use_axtree: bool = True
     use_screenshot: bool = False
+
+    # ── AgentLab compatibility ──
+    # These are optional methods that AgentLab checks for with hasattr().
+    # If present, they allow benchmark-specific adjustments and
+    # reproducibility mode (deterministic sampling).
+
+    def set_benchmark(self, benchmark, demo_mode: bool = False):
+        """AgentLab compatibility: adjust agent settings based on benchmark.
+
+        Called by AgentLab before running experiments. For agent_a_eval,
+        we keep the existing configuration since it's already tuned.
+
+        Args:
+            benchmark: bgym.Benchmark object (includes name, is_multi_tab, etc.)
+            demo_mode: if True, agent should enable visual effects for demos.
+        """
+        if demo_mode:
+            self.demo_mode = "default"
+        # Store benchmark name for potential use in prompts
+        self._benchmark_name = getattr(benchmark, "name", "unknown")
+
+    def set_reproducibility_mode(self):
+        """AgentLab compatibility: make agent deterministic for reproducibility.
+
+        Sets temperature-like parameters to 0 for deterministic outputs.
+        For DemoAgent, reproducibility is achieved by fixing task_seed +
+        using low-temperature API calls.
+        """
+        pass
 
     def make_agent(self):
         return DemoAgent(

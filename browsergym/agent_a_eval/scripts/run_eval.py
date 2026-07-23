@@ -78,7 +78,7 @@ import yaml
 
 # 要测试的任务列表，留空 = 自动扫描 config.yaml 中 paths.tasks_dir 下的全部 .md
 # 示例: TASKS = ["data_analysis", "data_cleaning"]
-TASKS = ["data_analysis"]
+TASKS = ["data_cleaning"]
 
 # 稳定性测试的随机种子，None = 使用 config.yaml 中的 stability_seeds
 # 示例: SEEDS = [42, 123, 456, 789]
